@@ -1,0 +1,6 @@
+gohrec:
+  image: frxyt/gohrec:latest
+  ports:
+    - 127.0.0.1:8080:80
+  volumes:
+    - ./log:/gohrec/log:rw
