@@ -61,11 +61,13 @@ func (ghr GoHRec) handler(w http.ResponseWriter, r *http.Request) {
 	req := fmt.Sprintf("%s %s%s", r.Method, r.Host, r.URL.Path)
 
 	if ghr.onlyPath != nil && !ghr.onlyPath.MatchString(r.URL.Path) {
+		w.WriteHeader(http.StatusOK)
 		log("Skipped: doesn't match --only-path. (%s)", req)
 		return
 	}
 
 	if ghr.exceptPath != nil && ghr.exceptPath.MatchString(r.URL.Path) {
+		w.WriteHeader(http.StatusOK)
 		log("Skipped: match --except-path. (%s)", req)
 		return
 	}
@@ -96,6 +98,7 @@ func (ghr GoHRec) handler(w http.ResponseWriter, r *http.Request) {
 
 	json, err := json.MarshalIndent(record, "", " ")
 	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
 		log("Error while serializing record: %s", err)
 		return
 	}
@@ -103,16 +106,19 @@ func (ghr GoHRec) handler(w http.ResponseWriter, r *http.Request) {
 	filepath = path.Clean(filepath)
 	err = os.MkdirAll(filepath, 0755)
 	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
 		log("Error while preparing save: %s", err)
 		return
 	}
 	filename := fmt.Sprintf("%s/%s-%d.json", filepath, date.Format("15-04-05"), date.Nanosecond())
 	err = ioutil.WriteFile(filename, json, 0644)
 	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
 		log("Error while saving: %s", err)
 		return
 	}
-	log("Recorded: %s (%d ms)", filename, time.Now().Sub(date).Milliseconds())
+	w.WriteHeader(http.StatusCreated)
+	log("Recorded: %s (%d µs)", filename, time.Now().Sub(date).Microseconds())
 }
 
 func main() {
