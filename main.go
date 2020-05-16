@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/http/httputil"
 	"os"
 	"path"
 	"regexp"
@@ -183,10 +185,62 @@ func redo() {
 	redo := flag.NewFlagSet("redo", flag.PanicOnError)
 	request := redo.String("request", "", "JSON file of the request to redo.")
 	host := redo.String("host", "", "If set, change the host of the request to the one specified here.")
+	verbose := redo.Bool("verbose", false, "Display request dump too.")
 	redo.Parse(os.Args[2:])
 
 	log.Printf("  request: %s", *request)
 	log.Printf("  host: %s", *host)
+	log.Printf("  verbose: %t", *verbose)
+
+	content, err := ioutil.ReadFile(*request)
+	if err != nil {
+		log.Fatalf("Error while reading request file: %s", err)
+	}
+
+	type responseRecord struct {
+		Host, Method string
+		URI          string
+		Headers      []string
+		Body         string
+	}
+
+	var record responseRecord
+	err = json.Unmarshal(content, &record)
+	if err != nil {
+		log.Fatalf("Error while unmarshalling request file: %s", err)
+	}
+
+	if *host != "" {
+		record.Host = *host
+	}
+
+	req, err := http.NewRequest(record.Method, "http://"+record.Host+record.URI, bytes.NewBufferString(record.Body))
+	if err != nil {
+		log.Fatalf("Error while preparing request: %s", err)
+	}
+	for _, header := range record.Headers {
+		split := strings.SplitN(header, ": ", 2)
+		req.Header.Add(split[0], split[1])
+	}
+
+	if *verbose {
+		dump, err := httputil.DumpRequestOut(req, true)
+		if err != nil {
+			log.Fatalf("Error while dumping prepared request: %s", err)
+		}
+		log.Printf("%s\n", dump)
+	}
+
+	timeout, err := time.ParseDuration("60s")
+	client := http.Client{
+		Timeout: timeout,
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatalf("Error while sending request: %s", err)
+	}
+	defer resp.Body.Close()
+	log.Println(httputil.DumpResponse(resp, true))
 }
 
 func main() {

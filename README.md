@@ -17,7 +17,9 @@
 
 ## Build
 
-* Binary: `go build -o main .`
+* Binary:
+  * Linux: `go build -o gohrec .`
+  * Windows: `go build -o gohrec.exe .`
 * Docker: `docker build -t frxyt/gohrec:latest .`
 
 ## Usage
