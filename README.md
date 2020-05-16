@@ -32,6 +32,9 @@
 * `--listen`
 * `--only-path`
 * `--except-path`
+* `--echo`
+* `--index`
+* `--verbose`
 
 ### `gohrec redo`: redo a saved request
 

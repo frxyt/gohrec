@@ -5,6 +5,8 @@
 package main
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -23,6 +25,7 @@ import (
 type GoHRec struct {
 	listen               string
 	onlyPath, exceptPath *regexp.Regexp
+	echo, index, verbose bool
 }
 
 // ResponseRecord contains a logged HTTP request.
@@ -54,8 +57,10 @@ func (ghr GoHRec) handler(w http.ResponseWriter, r *http.Request) {
 
 	log := func(format string, a ...interface{}) {
 		s := fmt.Sprintf(format, a...)
-		fmt.Fprint(w, s)
-		log.Print(s)
+		fmt.Fprint(w, s+"\n")
+		if ghr.verbose {
+			log.Print(s)
+		}
 	}
 
 	req := fmt.Sprintf("%s %s%s", r.Method, r.Host, r.URL.Path)
@@ -110,7 +115,7 @@ func (ghr GoHRec) handler(w http.ResponseWriter, r *http.Request) {
 		log("Error while preparing save: %s", err)
 		return
 	}
-	filename := fmt.Sprintf("%s/%s-%d.json", filepath, date.Format("15-04-05"), date.Nanosecond())
+	filename := fmt.Sprintf("%s/%s-%09d.json", filepath, date.Format("15-04-05"), date.Nanosecond())
 	err = ioutil.WriteFile(filename, json, 0644)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -118,7 +123,23 @@ func (ghr GoHRec) handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
+	if ghr.echo {
+		fmt.Fprintf(w, "%s\n", json)
+	}
 	log("Recorded: %s (%d µs)", filename, time.Now().Sub(date).Microseconds())
+
+	if ghr.index {
+		err = os.MkdirAll("index", 0755)
+		if err == nil {
+			md5 := md5.Sum([]byte(req))
+			err = os.Symlink(filename, fmt.Sprintf("index/%s_%09d_%s.json", date.Format("2006-01-02_15-04-05"), date.Nanosecond(), hex.EncodeToString(md5[:])))
+			if err != nil {
+				log("Error while creating index: %s", err)
+			}
+		} else {
+			log("Error while creating `index` directory: %s", err)
+		}
+	}
 }
 
 func record() {
@@ -126,6 +147,9 @@ func record() {
 	listen := record.String("listen", ":8080", "Interface and port to listen.")
 	onlyPath := record.String("only-path", "", "If set, record only requests that match the specified URL path pattern.")
 	exceptPath := record.String("except-path", "", "If set, record requests that don't match the specified URL path pattern.")
+	echo := record.Bool("echo", false, "Echo logged request on calls.")
+	index := record.Bool("index", false, "Build a flat-chronological index to all saved requests.")
+	verbose := record.Bool("verbose", false, "Log processed request status.")
 	record.Parse(os.Args[2:])
 
 	makeRegexp := func(s *string) *regexp.Regexp {
@@ -139,11 +163,17 @@ func record() {
 		listen:     *listen,
 		onlyPath:   makeRegexp(onlyPath),
 		exceptPath: makeRegexp(exceptPath),
+		echo:       *echo,
+		index:      *index,
+		verbose:    *verbose,
 	}
 
 	log.Printf("  listen: %s", gohrec.listen)
 	log.Printf("  only-path: %s", gohrec.onlyPath)
 	log.Printf("  except-path: %s", gohrec.exceptPath)
+	log.Printf("  echo: %t", gohrec.echo)
+	log.Printf("  index: %t", gohrec.index)
+	log.Printf("  verbose: %t", gohrec.verbose)
 
 	http.HandleFunc("/", gohrec.handler)
 	log.Fatal(http.ListenAndServe(gohrec.listen, nil))
