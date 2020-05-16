@@ -5,13 +5,14 @@
 FROM golang:latest AS build
 WORKDIR /app
 COPY *.go ./
-#RUN go mod download
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -tags netgo -ldflags '-w -extldflags "-static"' -o main .
 
 FROM busybox:latest
 LABEL maintainer="Jérémy WALTHER <jeremy@ferox.yt>"
 WORKDIR /gohrec/log
 COPY --from=build /app/main /usr/local/bin/gohrec
-EXPOSE 80
+RUN adduser -DHg gohrec gohrec
+USER gohrec
+EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/gohrec"]
 CMD [ "record", "--listen=:8080" ]
