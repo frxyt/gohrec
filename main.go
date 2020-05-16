@@ -40,7 +40,7 @@ type ResponseRecord struct {
 	URI                          string
 	Headers                      []string
 	ContentLength                int64
-	Body                         *string
+	Body                         string
 }
 
 func dumpValues(in map[string][]string) []string {
@@ -97,7 +97,7 @@ func (ghr GoHRec) handler(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength > 0 {
 		body, err := ioutil.ReadAll(r.Body)
 		if err == nil {
-			*record.Body = fmt.Sprintf("%s", body)
+			record.Body = fmt.Sprintf("%s", body)
 		} else {
 			log("Error while dumping body: %s", err)
 		}
