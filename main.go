@@ -228,7 +228,7 @@ func redo() {
 		if err != nil {
 			log.Fatalf("Error while dumping prepared request: %s", err)
 		}
-		log.Printf("%s\n", dump)
+		log.Printf("Request:\n%s\n", dump)
 	}
 
 	timeout, err := time.ParseDuration("60s")
@@ -240,7 +240,11 @@ func redo() {
 		log.Fatalf("Error while sending request: %s", err)
 	}
 	defer resp.Body.Close()
-	log.Println(httputil.DumpResponse(resp, true))
+	dump, err := httputil.DumpResponse(resp, true)
+	if err != nil {
+		log.Fatalf("Error while dumping response: %s", err)
+	}
+	log.Printf("Response:\n%s\n", dump)
 }
 
 func main() {
