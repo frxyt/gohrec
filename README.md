@@ -1,5 +1,20 @@
 # GoHRec :: HTTP Request Recorder written in Golang
 
+![Docker Cloud Automated build](https://img.shields.io/docker/cloud/automated/frxyt/gohrec.svg)
+![Docker Cloud Build Status](https://img.shields.io/docker/cloud/build/frxyt/gohrec.svg)
+![Docker Pulls](https://img.shields.io/docker/pulls/frxyt/gohrec.svg)
+![GitHub issues](https://img.shields.io/github/issues/frxyt/gohrec.svg)
+![GitHub last commit](https://img.shields.io/github/last-commit/frxyt/gohrec.svg)
+
+> GoHRec logs HTTP requests it receive as JSON files, with all their details (including headers and body) and is able to redo these saved requests.
+
+* Docker Hub: https://hub.docker.com/r/frxyt/gohrec
+* GitHub: https://github.com/frxyt/gohrec
+
+## Docker Hub Image
+
+**`frxyt/gohrec`**
+
 ## Build
 
 * Binary: `go build -o main .`
@@ -7,8 +22,21 @@
 
 ## Usage
 
-* `docker run --rm -p 80:80 -v $(pwd):/gohrec/log frxyt/gohrec:latest`
+* `docker run --rm -p 8080:8080 -v $(pwd):/gohrec/log frxyt/gohrec:latest`
 * `docker-compose up`
+
+## Options
+
+### `gohrec record`: record requests
+
+* `--listen`
+* `--only-path`
+* `--except-path`
+
+### `gohrec redo`: redo a saved request
+
+* `--request`
+* `--host`
 
 ## License
 

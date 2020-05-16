@@ -121,11 +121,12 @@ func (ghr GoHRec) handler(w http.ResponseWriter, r *http.Request) {
 	log("Recorded: %s (%d µs)", filename, time.Now().Sub(date).Microseconds())
 }
 
-func main() {
-	listen := flag.String("listen", ":8080", "Interface and port to listen.")
-	onlyPath := flag.String("only-path", "", "If set, record only requests that match the specified URL path pattern.")
-	exceptPath := flag.String("except-path", "", "If set, record requests that don't match the specified URL path pattern.")
-	flag.Parse()
+func record() {
+	record := flag.NewFlagSet("record", flag.PanicOnError)
+	listen := record.String("listen", ":8080", "Interface and port to listen.")
+	onlyPath := record.String("only-path", "", "If set, record only requests that match the specified URL path pattern.")
+	exceptPath := record.String("except-path", "", "If set, record requests that don't match the specified URL path pattern.")
+	record.Parse(os.Args[2:])
 
 	makeRegexp := func(s *string) *regexp.Regexp {
 		if s == nil || *s == "" {
@@ -140,10 +141,37 @@ func main() {
 		exceptPath: makeRegexp(exceptPath),
 	}
 
-	http.HandleFunc("/", gohrec.handler)
-	log.Print("[frxyt/gohrec] <https://github.com/frxyt/gohrec>")
 	log.Printf("  listen: %s", gohrec.listen)
 	log.Printf("  only-path: %s", gohrec.onlyPath)
 	log.Printf("  except-path: %s", gohrec.exceptPath)
+
+	http.HandleFunc("/", gohrec.handler)
 	log.Fatal(http.ListenAndServe(gohrec.listen, nil))
+}
+
+func redo() {
+	redo := flag.NewFlagSet("redo", flag.PanicOnError)
+	request := redo.String("request", "", "JSON file of the request to redo.")
+	host := redo.String("host", "", "If set, change the host of the request to the one specified here.")
+	redo.Parse(os.Args[2:])
+
+	log.Printf("  request: %s", *request)
+	log.Printf("  host: %s", *host)
+}
+
+func main() {
+	log.Print("[frxyt/gohrec] <https://github.com/frxyt/gohrec>")
+
+	if len(os.Args) < 2 {
+		log.Fatal("Expected `record` or `redo` subcommands.")
+	}
+
+	switch os.Args[1] {
+	case "record":
+		record()
+	case "redo":
+		redo()
+	default:
+		log.Fatal("Expected `record` or `redo` subcommands.")
+	}
 }

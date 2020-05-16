@@ -14,4 +14,4 @@ WORKDIR /gohrec/log
 COPY --from=build /app/main /usr/local/bin/gohrec
 EXPOSE 80
 ENTRYPOINT ["/usr/local/bin/gohrec"]
-CMD ["--listen=:80"]
+CMD [ "record", "--listen=:8080" ]
