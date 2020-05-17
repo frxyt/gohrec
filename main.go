@@ -23,15 +23,13 @@ import (
 	"time"
 )
 
-// GoHRec records HTTP requests.
-type GoHRec struct {
+type goHRec struct {
 	listen               string
 	onlyPath, exceptPath *regexp.Regexp
 	echo, index, verbose bool
 }
 
-// ResponseRecord contains a logged HTTP request.
-type ResponseRecord struct {
+type responseRecord struct {
 	Date, DateUTC                time.Time
 	DateUnixNano                 int64
 	RemoteAddr                   string
@@ -54,7 +52,7 @@ func dumpValues(in map[string][]string) []string {
 	return out
 }
 
-func (ghr GoHRec) handler(w http.ResponseWriter, r *http.Request) {
+func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 	date := time.Now()
 
 	log := func(format string, a ...interface{}) {
@@ -79,7 +77,7 @@ func (ghr GoHRec) handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	record := ResponseRecord{
+	record := responseRecord{
 		Date:          date,
 		DateUTC:       date.UTC(),
 		DateUnixNano:  date.UnixNano(),
@@ -161,7 +159,7 @@ func record() {
 		return regexp.MustCompile(*s)
 	}
 
-	gohrec := GoHRec{
+	gohrec := goHRec{
 		listen:     *listen,
 		onlyPath:   makeRegexp(onlyPath),
 		exceptPath: makeRegexp(exceptPath),
