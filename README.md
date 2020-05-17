@@ -1,14 +1,50 @@
 # GoHRec :: HTTP Request Recorder written in Golang
 
+![Docker Cloud Automated build](https://img.shields.io/docker/cloud/automated/frxyt/gohrec.svg)
+![Docker Cloud Build Status](https://img.shields.io/docker/cloud/build/frxyt/gohrec.svg)
+![Docker Pulls](https://img.shields.io/docker/pulls/frxyt/gohrec.svg)
+![GitHub issues](https://img.shields.io/github/issues/frxyt/gohrec.svg)
+![GitHub last commit](https://img.shields.io/github/last-commit/frxyt/gohrec.svg)
+
+> GoHRec logs HTTP requests it receive as JSON files, with all their details (including headers and body) and is able to redo these saved requests.
+
+* Docker Hub: https://hub.docker.com/r/frxyt/gohrec
+* GitHub: https://github.com/frxyt/gohrec
+
+## Docker Hub Image
+
+**`frxyt/gohrec`**
+
 ## Build
 
-* Binary: `go build -o main .`
+* Binary:
+  * Linux: `go build -o gohrec .`
+  * Windows: `go build -o gohrec.exe .`
 * Docker: `docker build -t frxyt/gohrec:latest .`
 
 ## Usage
 
-* `docker run --rm -p 80:80 -v $(pwd):/gohrec/log frxyt/gohrec:latest`
+* `docker run --rm -p 8080:8080 -v $(pwd):/gohrec/log frxyt/gohrec:latest`
 * `docker-compose up`
+* `gohrec --listen=:8080 --only-path=^/api --except-path=/admin`
+
+## Options
+
+### `gohrec record`: record requests
+
+* `--date-format <format>`: [Go format of the date](https://golang.org/pkg/time/#Time.Format) used in record filenames, required subfolders are created automatically (default: `2006-01-02/15-04-05_`).
+* `--echo`: Echo logged request on calls.
+* `--except-path <regexp>`: If set, record requests that don't match the specified URL path pattern.
+* `--index`: Build an index of hashes and their clear text representation.
+* `--listen <interface:port>`: Interface and port to listen (default: `:8080`).
+* `--only-path <regexp>`: If set, record only requests that match the specified URL path pattern.
+* `--verbose`: Log processed request status.
+
+### `gohrec redo`: redo a saved request
+
+* `--host`: If set, change the host of the request to the one specified here.
+* `--request`: JSON file of the request to redo.
+* `--url`: If set, change the URL of the request to the one specified here.
 
 ## License
 
