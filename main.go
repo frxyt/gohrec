@@ -186,11 +186,13 @@ func redo() {
 	redo := flag.NewFlagSet("redo", flag.PanicOnError)
 	request := redo.String("request", "", "JSON file of the request to redo.")
 	host := redo.String("host", "", "If set, change the host of the request to the one specified here.")
+	url := redo.String("url", "", "If set, change the URL of the request to the one specified here.")
 	verbose := redo.Bool("verbose", false, "Display request dump too.")
 	redo.Parse(os.Args[2:])
 
 	log.Printf("  request: %s", *request)
 	log.Printf("  host: %s", *host)
+	log.Printf("  url: %s", *url)
 	log.Printf("  verbose: %t", *verbose)
 
 	content, err := ioutil.ReadFile(*request)
@@ -213,7 +215,11 @@ func redo() {
 		record.Host = *host
 	}
 
-	req, err := http.NewRequest(record.Method, "http://"+record.Host+record.URI, bytes.NewBufferString(record.Body))
+	if *url != "" {
+		record.URI = *url
+	}
+
+	req, err := http.NewRequest(record.Method, record.URI, bytes.NewBufferString(record.Body))
 	if err != nil {
 		log.Fatalf("Error while preparing request: %s", err)
 	}

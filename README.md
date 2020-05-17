@@ -34,6 +34,7 @@
 * `--listen`
 * `--only-path`
 * `--except-path`
+* `--date-format`
 * `--echo`
 * `--index`
 * `--verbose`
@@ -42,6 +43,7 @@
 
 * `--request`
 * `--host`
+* `--url`
 
 ## License
 
