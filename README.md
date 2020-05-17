@@ -26,24 +26,25 @@
 
 * `docker run --rm -p 8080:8080 -v $(pwd):/gohrec/log frxyt/gohrec:latest`
 * `docker-compose up`
+* `gohrec --listen=:8080 --only-path=^/api --except-path=/admin`
 
 ## Options
 
 ### `gohrec record`: record requests
 
-* `--listen`
-* `--only-path`
-* `--except-path`
-* `--date-format`
-* `--echo`
-* `--index`
-* `--verbose`
+* `--date-format <format>`: [Go format of the date](https://golang.org/pkg/time/#Time.Format) used in record filenames, required subfolders are created automatically (default: `2006-01-02/15-04-05_`).
+* `--echo`: Echo logged request on calls.
+* `--except-path <regexp>`: If set, record requests that don't match the specified URL path pattern.
+* `--index`: Build an index of hashes and their clear text representation.
+* `--listen <interface:port>`: Interface and port to listen (default: `:8080`).
+* `--only-path <regexp>`: If set, record only requests that match the specified URL path pattern.
+* `--verbose`: Log processed request status.
 
 ### `gohrec redo`: redo a saved request
 
-* `--request`
-* `--host`
-* `--url`
+* `--host`: If set, change the host of the request to the one specified here.
+* `--request`: JSON file of the request to redo.
+* `--url`: If set, change the URL of the request to the one specified here.
 
 ## License
 
