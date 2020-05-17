@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"os"
-	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -24,7 +23,7 @@ import (
 )
 
 type goHRec struct {
-	listen               string
+	listen, dateFormat   string
 	onlyPath, exceptPath *regexp.Regexp
 	echo, index, verbose bool
 }
@@ -63,7 +62,7 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	req := fmt.Sprintf("%s %s%s", r.Method, r.Host, r.URL.Path)
+	req := fmt.Sprintf("[%s] %s %s", r.Host, r.Method, r.URL.Path)
 
 	if ghr.onlyPath != nil && !ghr.onlyPath.MatchString(r.URL.Path) {
 		w.WriteHeader(http.StatusOK)
@@ -107,15 +106,16 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 		log("Error while serializing record: %s", err)
 		return
 	}
-	filepath := fmt.Sprintf("%s/%s/%s", date.Format("2006-01-02"), strings.Split(r.Host, ":")[0], r.URL.Path)
-	filepath = path.Clean(filepath)
+	filepath := fmt.Sprintf("%s", date.Format(ghr.dateFormat))
 	err = os.MkdirAll(filepath, 0755)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		log("Error while preparing save: %s", err)
 		return
 	}
-	filename := fmt.Sprintf("%s/%s-%09d.json", filepath, date.Format("15-04-05"), date.Nanosecond())
+	md5Hash := md5.Sum([]byte(req))
+	md5String := hex.EncodeToString(md5Hash[:])
+	filename := fmt.Sprintf("%s%09d_%s.json", filepath, date.Nanosecond(), md5String)
 	err = ioutil.WriteFile(filename, json, 0644)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -131,10 +131,10 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 	if ghr.index {
 		err = os.MkdirAll("index", 0755)
 		if err == nil {
-			md5 := md5.Sum([]byte(req))
-			err = os.Symlink(filename, fmt.Sprintf("index/%s_%09d_%s.json", date.Format("2006-01-02_15-04-05"), date.Nanosecond(), hex.EncodeToString(md5[:])))
-			if err != nil {
-				log("Error while creating index: %s", err)
+			if _, err := os.Stat(fmt.Sprintf("index/%s", md5String)); os.IsNotExist(err) {
+				if err := ioutil.WriteFile(fmt.Sprintf("index/%s", md5String), []byte(req), 0644); err != nil {
+					log("Error while creating index: %s", err)
+				}
 			}
 		} else {
 			log("Error while creating `index` directory: %s", err)
@@ -145,10 +145,11 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 func record() {
 	record := flag.NewFlagSet("record", flag.PanicOnError)
 	listen := record.String("listen", ":8080", "Interface and port to listen.")
+	dateFormat := record.String("date-format", "2006-01-02/15-04-05_", "Go format of the date used in record filenames, required subfolders are created automatically.")
 	onlyPath := record.String("only-path", "", "If set, record only requests that match the specified URL path pattern.")
 	exceptPath := record.String("except-path", "", "If set, record requests that don't match the specified URL path pattern.")
 	echo := record.Bool("echo", false, "Echo logged request on calls.")
-	index := record.Bool("index", false, "Build a flat-chronological index to all saved requests.")
+	index := record.Bool("index", false, "Build an index of hashes and their clear text representation.")
 	verbose := record.Bool("verbose", false, "Log processed request status.")
 	record.Parse(os.Args[2:])
 
@@ -161,6 +162,7 @@ func record() {
 
 	gohrec := goHRec{
 		listen:     *listen,
+		dateFormat: *dateFormat,
 		onlyPath:   makeRegexp(onlyPath),
 		exceptPath: makeRegexp(exceptPath),
 		echo:       *echo,
@@ -171,6 +173,7 @@ func record() {
 	log.Printf("  listen: %s", gohrec.listen)
 	log.Printf("  only-path: %s", gohrec.onlyPath)
 	log.Printf("  except-path: %s", gohrec.exceptPath)
+	log.Printf("  date-format: %s", gohrec.dateFormat)
 	log.Printf("  echo: %t", gohrec.echo)
 	log.Printf("  index: %t", gohrec.index)
 	log.Printf("  verbose: %t", gohrec.verbose)
@@ -196,10 +199,8 @@ func redo() {
 	}
 
 	type responseRecord struct {
-		Host, Method string
-		URI          string
-		Headers      []string
-		Body         string
+		Body, Host, Method, URI string
+		Headers                 []string
 	}
 
 	var record responseRecord
