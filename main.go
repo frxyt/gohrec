@@ -97,6 +97,7 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 			log("Error while dumping body: %s", err)
 		}
 		record.Body = fmt.Sprintf("%s", body)
+		defer r.Body.Close()
 	}
 
 	json, err := json.MarshalIndent(record, "", " ")
