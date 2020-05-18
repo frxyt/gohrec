@@ -28,6 +28,10 @@ type goHRec struct {
 	echo, index, verbose bool
 }
 
+type recordingTime struct {
+	received, responded, deferred, saved time.Time
+}
+
 type responseRecord struct {
 	Date, DateUTC                time.Time
 	DateUnixNano                 int64
@@ -57,14 +61,16 @@ func (ghr goHRec) log(format string, a ...interface{}) {
 	}
 }
 
-func (ghr goHRec) save(req string, record responseRecord, date time.Time) {
+func (ghr goHRec) save(req string, record responseRecord, rt recordingTime) {
+	rt.deferred = time.Now()
+
 	json, err := json.MarshalIndent(record, "", " ")
 	if err != nil {
 		ghr.log("Error while serializing record: %s", err)
 		return
 	}
 
-	filebase := fmt.Sprintf("%s", date.Format(ghr.dateFormat))
+	filebase := fmt.Sprintf("%s", rt.received.Format(ghr.dateFormat))
 	filepath := filebase
 	if i := strings.LastIndex(filepath, "/"); i > -1 {
 		filepath = filebase[:i]
@@ -75,13 +81,12 @@ func (ghr goHRec) save(req string, record responseRecord, date time.Time) {
 	}
 	md5Hash := md5.Sum([]byte(req))
 	md5String := hex.EncodeToString(md5Hash[:])
-	filename := fmt.Sprintf("%s%09d_%s.json", filebase, date.Nanosecond(), md5String)
+	filename := fmt.Sprintf("%s%09d_%s.json", filebase, rt.received.Nanosecond(), md5String)
 
 	if err = ioutil.WriteFile(filename, json, 0644); err != nil {
 		ghr.log("Error while saving: %s", err)
 		return
 	}
-	ghr.log("Recorded: %s (%s) (%d µs)", filename, req, time.Now().Sub(date).Microseconds())
 
 	if ghr.index {
 		if err = os.MkdirAll("index", 0755); err == nil {
@@ -94,10 +99,18 @@ func (ghr goHRec) save(req string, record responseRecord, date time.Time) {
 			ghr.log("Error while creating `index` directory: %s", err)
 		}
 	}
+
+	rt.saved = time.Now()
+	ghr.log("Recorded: %s (%s) (responded: %d µs, saved: %d µs)",
+		filename,
+		req,
+		rt.responded.Sub(rt.received).Microseconds(),
+		rt.saved.Sub(rt.deferred).Microseconds(),
+	)
 }
 
 func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
-	date := time.Now()
+	rt := recordingTime{received: time.Now()}
 	req := fmt.Sprintf("[%s] %s %s", r.Host, r.Method, r.URL.Path)
 
 	if ghr.onlyPath != nil && !ghr.onlyPath.MatchString(r.URL.Path) {
@@ -115,9 +128,9 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	record := responseRecord{
-		Date:          date,
-		DateUTC:       date.UTC(),
-		DateUnixNano:  date.UnixNano(),
+		Date:          rt.received,
+		DateUTC:       rt.received.UTC(),
+		DateUnixNano:  rt.received.UnixNano(),
 		RemoteAddr:    r.RemoteAddr,
 		Host:          r.Host,
 		Method:        r.Method,
@@ -144,9 +157,10 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(w, "%s\n", json)
 		}
 	}
-	fmt.Fprintf(w, "Recorded: %d µs.\n", time.Now().Sub(date).Microseconds())
+	fmt.Fprintf(w, "Recorded: %d µs.\n", time.Now().Sub(rt.received).Microseconds())
 
-	defer ghr.save(req, record, date)
+	rt.responded = time.Now()
+	defer ghr.save(req, record, rt)
 }
 
 func record() {
