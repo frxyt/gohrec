@@ -63,6 +63,7 @@ func (ghr goHRec) save(req string, record responseRecord, date time.Time) {
 		ghr.log("Error while serializing record: %s", err)
 		return
 	}
+
 	filebase := fmt.Sprintf("%s", date.Format(ghr.dateFormat))
 	filepath := filebase
 	if i := strings.LastIndex(filepath, "/"); i > -1 {
@@ -75,6 +76,7 @@ func (ghr goHRec) save(req string, record responseRecord, date time.Time) {
 	md5Hash := md5.Sum([]byte(req))
 	md5String := hex.EncodeToString(md5Hash[:])
 	filename := fmt.Sprintf("%s%09d_%s.json", filebase, date.Nanosecond(), md5String)
+
 	if err = ioutil.WriteFile(filename, json, 0644); err != nil {
 		ghr.log("Error while saving: %s", err)
 		return
@@ -191,14 +193,21 @@ func redo() {
 	redo := flag.NewFlagSet("redo", flag.PanicOnError)
 	request := redo.String("request", "", "JSON file of the request to redo.")
 	host := redo.String("host", "", "If set, change the host of the request to the one specified here.")
+	timeout := redo.String("timeout", "60s", "Timeout of the request to redo.")
 	url := redo.String("url", "", "If set, change the URL of the request to the one specified here.")
 	verbose := redo.Bool("verbose", false, "Display request dump too.")
 	redo.Parse(os.Args[2:])
 
 	log.Printf("  request: %s", *request)
 	log.Printf("  host: %s", *host)
+	log.Printf("  timeout: %s", *timeout)
 	log.Printf("  url: %s", *url)
 	log.Printf("  verbose: %t", *verbose)
+
+	reqtout, err := time.ParseDuration(*timeout)
+	if err != nil {
+		log.Fatalf("Error while parsing timeout: %s", err)
+	}
 
 	content, err := ioutil.ReadFile(*request)
 	if err != nil {
@@ -240,15 +249,15 @@ func redo() {
 		log.Printf("Request:\n%s\n", dump)
 	}
 
-	timeout, err := time.ParseDuration("60s")
 	client := http.Client{
-		Timeout: timeout,
+		Timeout: reqtout,
 	}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Fatalf("Error while sending request: %s", err)
 	}
 	defer resp.Body.Close()
+
 	dump, err := httputil.DumpResponse(resp, true)
 	if err != nil {
 		log.Fatalf("Error while dumping response: %s", err)

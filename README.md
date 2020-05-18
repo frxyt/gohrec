@@ -44,6 +44,7 @@
 
 * `--host`: If set, change the host of the request to the one specified here.
 * `--request`: JSON file of the request to redo.
+* `--timeout`: Timeout of the request to redo (default: `60s`).
 * `--url`: If set, change the URL of the request to the one specified here.
 
 ## License
