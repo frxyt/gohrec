@@ -51,28 +51,64 @@ func dumpValues(in map[string][]string) []string {
 	return out
 }
 
-func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
-	date := time.Now()
+func (ghr goHRec) log(format string, a ...interface{}) {
+	if ghr.verbose {
+		log.Printf(format, a...)
+	}
+}
 
-	log := func(format string, a ...interface{}) {
-		s := fmt.Sprintf(format, a...)
-		fmt.Fprint(w, s+"\n")
-		if ghr.verbose {
-			log.Print(s)
+func (ghr goHRec) save(req string, record responseRecord, date time.Time) {
+	json, err := json.MarshalIndent(record, "", " ")
+	if err != nil {
+		ghr.log("Error while serializing record: %s", err)
+		return
+	}
+	filebase := fmt.Sprintf("%s", date.Format(ghr.dateFormat))
+	filepath := filebase
+	if i := strings.LastIndex(filepath, "/"); i > -1 {
+		filepath = filebase[:i]
+	}
+	if err = os.MkdirAll(filepath, 0755); err != nil {
+		ghr.log("Error while preparing save: %s", err)
+		return
+	}
+	md5Hash := md5.Sum([]byte(req))
+	md5String := hex.EncodeToString(md5Hash[:])
+	filename := fmt.Sprintf("%s%09d_%s.json", filebase, date.Nanosecond(), md5String)
+	if err = ioutil.WriteFile(filename, json, 0644); err != nil {
+		ghr.log("Error while saving: %s", err)
+		return
+	}
+	ghr.log("Recorded: %s (%s) (%d µs)", filename, req, time.Now().Sub(date).Microseconds())
+
+	if ghr.index {
+		if err = os.MkdirAll("index", 0755); err == nil {
+			if _, err := os.Stat(fmt.Sprintf("index/%s", md5String)); os.IsNotExist(err) {
+				if err := ioutil.WriteFile(fmt.Sprintf("index/%s", md5String), []byte(req), 0644); err != nil {
+					ghr.log("Error while creating index: %s", err)
+				}
+			}
+		} else {
+			ghr.log("Error while creating `index` directory: %s", err)
 		}
 	}
+}
 
+func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
+	date := time.Now()
 	req := fmt.Sprintf("[%s] %s %s", r.Host, r.Method, r.URL.Path)
 
 	if ghr.onlyPath != nil && !ghr.onlyPath.MatchString(r.URL.Path) {
 		w.WriteHeader(http.StatusOK)
-		log("Skipped: doesn't match --only-path. (%s)", req)
+		fmt.Fprintln(w, "Skipped: not whitelisted.")
+		ghr.log("Skipped: doesn't match --only-path. (%s)", req)
 		return
 	}
 
 	if ghr.exceptPath != nil && ghr.exceptPath.MatchString(r.URL.Path) {
 		w.WriteHeader(http.StatusOK)
-		log("Skipped: match --except-path. (%s)", req)
+		fmt.Fprintln(w, "Skipped: blacklisted.")
+		ghr.log("Skipped: match --except-path. (%s)", req)
 		return
 	}
 
@@ -94,49 +130,21 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength > 0 {
 		body, err := ioutil.ReadAll(r.Body)
 		if err != nil {
-			log("Error while dumping body: %s", err)
+			ghr.log("Error while dumping body: %s", err)
 		}
 		record.Body = fmt.Sprintf("%s", body)
 		defer r.Body.Close()
 	}
 
-	json, err := json.MarshalIndent(record, "", " ")
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		log("Error while serializing record: %s", err)
-		return
-	}
-	filepath := fmt.Sprintf("%s", date.Format(ghr.dateFormat))
-	if err = os.MkdirAll(filepath, 0755); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		log("Error while preparing save: %s", err)
-		return
-	}
-	md5Hash := md5.Sum([]byte(req))
-	md5String := hex.EncodeToString(md5Hash[:])
-	filename := fmt.Sprintf("%s%09d_%s.json", filepath, date.Nanosecond(), md5String)
-	if err = ioutil.WriteFile(filename, json, 0644); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		log("Error while saving: %s", err)
-		return
-	}
 	w.WriteHeader(http.StatusCreated)
 	if ghr.echo {
-		fmt.Fprintf(w, "%s\n", json)
-	}
-	log("Recorded: %s (%d µs)", filename, time.Now().Sub(date).Microseconds())
-
-	if ghr.index {
-		if err = os.MkdirAll("index", 0755); err == nil {
-			if _, err := os.Stat(fmt.Sprintf("index/%s", md5String)); os.IsNotExist(err) {
-				if err := ioutil.WriteFile(fmt.Sprintf("index/%s", md5String), []byte(req), 0644); err != nil {
-					log("Error while creating index: %s", err)
-				}
-			}
-		} else {
-			log("Error while creating `index` directory: %s", err)
+		if json, err := json.MarshalIndent(record, "", " "); err == nil {
+			fmt.Fprintf(w, "%s\n", json)
 		}
 	}
+	fmt.Fprintf(w, "Recorded: %d µs.\n", time.Now().Sub(date).Microseconds())
+
+	defer ghr.save(req, record, date)
 }
 
 func record() {
