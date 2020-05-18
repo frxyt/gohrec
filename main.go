@@ -107,8 +107,7 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filepath := fmt.Sprintf("%s", date.Format(ghr.dateFormat))
-	err = os.MkdirAll(filepath, 0755)
-	if err != nil {
+	if err = os.MkdirAll(filepath, 0755); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		log("Error while preparing save: %s", err)
 		return
@@ -116,8 +115,7 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 	md5Hash := md5.Sum([]byte(req))
 	md5String := hex.EncodeToString(md5Hash[:])
 	filename := fmt.Sprintf("%s%09d_%s.json", filepath, date.Nanosecond(), md5String)
-	err = ioutil.WriteFile(filename, json, 0644)
-	if err != nil {
+	if err = ioutil.WriteFile(filename, json, 0644); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		log("Error while saving: %s", err)
 		return
@@ -129,8 +127,7 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 	log("Recorded: %s (%d µs)", filename, time.Now().Sub(date).Microseconds())
 
 	if ghr.index {
-		err = os.MkdirAll("index", 0755)
-		if err == nil {
+		if err = os.MkdirAll("index", 0755); err == nil {
 			if _, err := os.Stat(fmt.Sprintf("index/%s", md5String)); os.IsNotExist(err) {
 				if err := ioutil.WriteFile(fmt.Sprintf("index/%s", md5String), []byte(req), 0644); err != nil {
 					log("Error while creating index: %s", err)
@@ -206,8 +203,7 @@ func redo() {
 	}
 
 	var record responseRecord
-	err = json.Unmarshal(content, &record)
-	if err != nil {
+	if err = json.Unmarshal(content, &record); err != nil {
 		log.Fatalf("Error while unmarshalling request file: %s", err)
 	}
 
