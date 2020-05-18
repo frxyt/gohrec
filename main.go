@@ -93,11 +93,10 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 
 	if r.ContentLength > 0 {
 		body, err := ioutil.ReadAll(r.Body)
-		if err == nil {
-			record.Body = fmt.Sprintf("%s", body)
-		} else {
+		if err != nil {
 			log("Error while dumping body: %s", err)
 		}
+		record.Body = fmt.Sprintf("%s", body)
 	}
 
 	json, err := json.MarshalIndent(record, "", " ")
