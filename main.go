@@ -146,6 +146,11 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 		body, err := ioutil.ReadAll(r.Body)
 		if err != nil {
 			ghr.log("Error while dumping body: %s", err)
+			dump, err := httputil.DumpRequest(r, true)
+			if err != nil {
+				log.Fatalf("Error while dumping response: %s", err)
+			}
+			log.Printf("%s\n", dump)
 		}
 		record.Body = fmt.Sprintf("%s", body)
 		defer r.Body.Close()
