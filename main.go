@@ -23,9 +23,9 @@ import (
 )
 
 type goHRec struct {
-	listen, dateFormat   string
-	onlyPath, exceptPath *regexp.Regexp
-	echo, index, verbose bool
+	listen, dateFormat                             string
+	onlyPath, exceptPath, redactBody, redactHeader *regexp.Regexp
+	echo, index, verbose                           bool
 }
 
 type recordingTime struct {
@@ -173,6 +173,8 @@ func record() {
 	dateFormat := record.String("date-format", "2006-01-02/15-04-05_", "Go format of the date used in record filenames, required subfolders are created automatically.")
 	onlyPath := record.String("only-path", "", "If set, record only requests that match the specified URL path pattern.")
 	exceptPath := record.String("except-path", "", "If set, record requests that don't match the specified URL path pattern.")
+	redactBody := record.String("redact-body", "", "If set, matching parts of the specified pattern in request body will be redacted.")
+	redactHeader := record.String("redact-header", "", "If set, matching parts of the specified pattern in request headers will be redacted.")
 	echo := record.Bool("echo", false, "Echo logged request on calls.")
 	index := record.Bool("index", false, "Build an index of hashes and their clear text representation.")
 	verbose := record.Bool("verbose", false, "Log processed request status.")
@@ -186,18 +188,22 @@ func record() {
 	}
 
 	gohrec := goHRec{
-		listen:     *listen,
-		dateFormat: *dateFormat,
-		onlyPath:   makeRegexp(onlyPath),
-		exceptPath: makeRegexp(exceptPath),
-		echo:       *echo,
-		index:      *index,
-		verbose:    *verbose,
+		listen:       *listen,
+		dateFormat:   *dateFormat,
+		onlyPath:     makeRegexp(onlyPath),
+		exceptPath:   makeRegexp(exceptPath),
+		redactBody:   makeRegexp(redactBody),
+		redactHeader: makeRegexp(redactHeader),
+		echo:         *echo,
+		index:        *index,
+		verbose:      *verbose,
 	}
 
 	log.Printf("  listen: %s", gohrec.listen)
 	log.Printf("  only-path: %s", gohrec.onlyPath)
 	log.Printf("  except-path: %s", gohrec.exceptPath)
+	log.Printf("  redact-body: %s", gohrec.redactBody)
+	log.Printf("  redact-header: %s", gohrec.redactHeader)
 	log.Printf("  date-format: %s", gohrec.dateFormat)
 	log.Printf("  echo: %t", gohrec.echo)
 	log.Printf("  index: %t", gohrec.index)
