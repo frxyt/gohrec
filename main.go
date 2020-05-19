@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -23,9 +24,14 @@ import (
 )
 
 type goHRec struct {
-	listen, dateFormat   string
-	onlyPath, exceptPath *regexp.Regexp
-	echo, index, verbose bool
+	listen, dateFormat, redactString                string
+	onlyPath, exceptPath, redactBody, redactHeaders *regexp.Regexp
+	maxBodySize                                     int64
+	echo, index, verbose                            bool
+}
+
+type recordingTime struct {
+	received, responded, deferred, saved time.Time
 }
 
 type responseRecord struct {
@@ -51,35 +57,92 @@ func dumpValues(in map[string][]string) []string {
 	return out
 }
 
-func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
-	date := time.Now()
+func (ghr goHRec) log(format string, a ...interface{}) {
+	if ghr.verbose {
+		log.Printf(format, a...)
+	}
+}
 
-	log := func(format string, a ...interface{}) {
-		s := fmt.Sprintf(format, a...)
-		fmt.Fprint(w, s+"\n")
-		if ghr.verbose {
-			log.Print(s)
+func (ghr goHRec) save(req string, record responseRecord, rt recordingTime) {
+	rt.deferred = time.Now()
+
+	if ghr.redactHeaders != nil && record.Headers != nil && len(record.Headers) > 0 {
+		for i := 0; i < len(record.Headers); i++ {
+			record.Headers[i] = ghr.redactHeaders.ReplaceAllString(record.Headers[i], ghr.redactString)
 		}
 	}
 
+	if ghr.redactBody != nil {
+		record.Body = ghr.redactBody.ReplaceAllString(record.Body, ghr.redactString)
+	}
+
+	json, err := json.MarshalIndent(record, "", " ")
+	if err != nil {
+		ghr.log("Error while serializing record: %s", err)
+		return
+	}
+
+	filebase := fmt.Sprintf("%s", rt.received.Format(ghr.dateFormat))
+	filepath := filebase
+	if i := strings.LastIndex(filepath, "/"); i > -1 {
+		filepath = filebase[:i]
+	}
+	if err = os.MkdirAll(filepath, 0755); err != nil {
+		ghr.log("Error while preparing save: %s", err)
+		return
+	}
+	md5Hash := md5.Sum([]byte(req))
+	md5String := hex.EncodeToString(md5Hash[:])
+	filename := fmt.Sprintf("%s%09d_%s.json", filebase, rt.received.Nanosecond(), md5String)
+
+	if err = ioutil.WriteFile(filename, json, 0644); err != nil {
+		ghr.log("Error while saving: %s", err)
+		return
+	}
+
+	if ghr.index {
+		if err = os.MkdirAll("index", 0755); err == nil {
+			if _, err := os.Stat(fmt.Sprintf("index/%s", md5String)); os.IsNotExist(err) {
+				if err := ioutil.WriteFile(fmt.Sprintf("index/%s", md5String), []byte(req), 0644); err != nil {
+					ghr.log("Error while creating index: %s", err)
+				}
+			}
+		} else {
+			ghr.log("Error while creating `index` directory: %s", err)
+		}
+	}
+
+	rt.saved = time.Now()
+	ghr.log("Recorded: %s (%s) (responded: %d µs, saved: %d µs)",
+		filename,
+		req,
+		rt.responded.Sub(rt.received).Microseconds(),
+		rt.saved.Sub(rt.deferred).Microseconds(),
+	)
+}
+
+func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
+	rt := recordingTime{received: time.Now()}
 	req := fmt.Sprintf("[%s] %s %s", r.Host, r.Method, r.URL.Path)
 
 	if ghr.onlyPath != nil && !ghr.onlyPath.MatchString(r.URL.Path) {
 		w.WriteHeader(http.StatusOK)
-		log("Skipped: doesn't match --only-path. (%s)", req)
+		fmt.Fprintln(w, "Skipped: not whitelisted.")
+		ghr.log("Skipped: doesn't match --only-path. (%s)", req)
 		return
 	}
 
 	if ghr.exceptPath != nil && ghr.exceptPath.MatchString(r.URL.Path) {
 		w.WriteHeader(http.StatusOK)
-		log("Skipped: match --except-path. (%s)", req)
+		fmt.Fprintln(w, "Skipped: blacklisted.")
+		ghr.log("Skipped: match --except-path. (%s)", req)
 		return
 	}
 
 	record := responseRecord{
-		Date:          date,
-		DateUTC:       date.UTC(),
-		DateUnixNano:  date.UnixNano(),
+		Date:          rt.received,
+		DateUTC:       rt.received.UTC(),
+		DateUnixNano:  rt.received.UnixNano(),
 		RemoteAddr:    r.RemoteAddr,
 		Host:          r.Host,
 		Method:        r.Method,
@@ -91,55 +154,27 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 		ContentLength: r.ContentLength,
 	}
 
-	if r.ContentLength > 0 {
-		body, err := ioutil.ReadAll(r.Body)
-		if err == nil {
-			record.Body = fmt.Sprintf("%s", body)
-		} else {
-			log("Error while dumping body: %s", err)
-		}
+	var bodyReader io.Reader
+	bodyReader = r.Body
+	if ghr.maxBodySize != -1 {
+		bodyReader = io.LimitReader(r.Body, ghr.maxBodySize)
 	}
+	body, err := ioutil.ReadAll(bodyReader)
+	if err != nil {
+		ghr.log("Error while dumping body: %s", err)
+	}
+	record.Body = fmt.Sprintf("%s", body)
 
-	json, err := json.MarshalIndent(record, "", " ")
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		log("Error while serializing record: %s", err)
-		return
-	}
-	filepath := fmt.Sprintf("%s", date.Format(ghr.dateFormat))
-	err = os.MkdirAll(filepath, 0755)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		log("Error while preparing save: %s", err)
-		return
-	}
-	md5Hash := md5.Sum([]byte(req))
-	md5String := hex.EncodeToString(md5Hash[:])
-	filename := fmt.Sprintf("%s%09d_%s.json", filepath, date.Nanosecond(), md5String)
-	err = ioutil.WriteFile(filename, json, 0644)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		log("Error while saving: %s", err)
-		return
-	}
 	w.WriteHeader(http.StatusCreated)
 	if ghr.echo {
-		fmt.Fprintf(w, "%s\n", json)
-	}
-	log("Recorded: %s (%d µs)", filename, time.Now().Sub(date).Microseconds())
-
-	if ghr.index {
-		err = os.MkdirAll("index", 0755)
-		if err == nil {
-			if _, err := os.Stat(fmt.Sprintf("index/%s", md5String)); os.IsNotExist(err) {
-				if err := ioutil.WriteFile(fmt.Sprintf("index/%s", md5String), []byte(req), 0644); err != nil {
-					log("Error while creating index: %s", err)
-				}
-			}
-		} else {
-			log("Error while creating `index` directory: %s", err)
+		if json, err := json.MarshalIndent(record, "", " "); err == nil {
+			fmt.Fprintf(w, "%s\n", json)
 		}
 	}
+	fmt.Fprintf(w, "Recorded: %d µs.\n", time.Now().Sub(rt.received).Microseconds())
+
+	rt.responded = time.Now()
+	defer ghr.save(req, record, rt)
 }
 
 func record() {
@@ -148,6 +183,10 @@ func record() {
 	dateFormat := record.String("date-format", "2006-01-02/15-04-05_", "Go format of the date used in record filenames, required subfolders are created automatically.")
 	onlyPath := record.String("only-path", "", "If set, record only requests that match the specified URL path pattern.")
 	exceptPath := record.String("except-path", "", "If set, record requests that don't match the specified URL path pattern.")
+	maxBodySize := record.Int64("max-body-size", -1, "Maximum size of body in bytes that will be recorded, `-1` to disallow limit.")
+	redactBody := record.String("redact-body", "", "If set, matching parts of the specified pattern in request body will be redacted.")
+	redactHeaders := record.String("redact-headers", "", "If set, matching parts of the specified pattern in request headers will be redacted.")
+	redactString := record.String("redact-string", "**REDACTED**", "Replacement string for redacted content.")
 	echo := record.Bool("echo", false, "Echo logged request on calls.")
 	index := record.Bool("index", false, "Build an index of hashes and their clear text representation.")
 	verbose := record.Bool("verbose", false, "Log processed request status.")
@@ -161,18 +200,26 @@ func record() {
 	}
 
 	gohrec := goHRec{
-		listen:     *listen,
-		dateFormat: *dateFormat,
-		onlyPath:   makeRegexp(onlyPath),
-		exceptPath: makeRegexp(exceptPath),
-		echo:       *echo,
-		index:      *index,
-		verbose:    *verbose,
+		listen:        *listen,
+		dateFormat:    *dateFormat,
+		onlyPath:      makeRegexp(onlyPath),
+		exceptPath:    makeRegexp(exceptPath),
+		maxBodySize:   *maxBodySize,
+		redactBody:    makeRegexp(redactBody),
+		redactHeaders: makeRegexp(redactHeaders),
+		redactString:  *redactString,
+		echo:          *echo,
+		index:         *index,
+		verbose:       *verbose,
 	}
 
 	log.Printf("  listen: %s", gohrec.listen)
 	log.Printf("  only-path: %s", gohrec.onlyPath)
 	log.Printf("  except-path: %s", gohrec.exceptPath)
+	log.Printf("  max-body-size: %d", gohrec.maxBodySize)
+	log.Printf("  redact-body: %s", gohrec.redactBody)
+	log.Printf("  redact-headers: %s", gohrec.redactHeaders)
+	log.Printf("  redact-string: %s", gohrec.redactString)
 	log.Printf("  date-format: %s", gohrec.dateFormat)
 	log.Printf("  echo: %t", gohrec.echo)
 	log.Printf("  index: %t", gohrec.index)
@@ -186,14 +233,21 @@ func redo() {
 	redo := flag.NewFlagSet("redo", flag.PanicOnError)
 	request := redo.String("request", "", "JSON file of the request to redo.")
 	host := redo.String("host", "", "If set, change the host of the request to the one specified here.")
+	timeout := redo.String("timeout", "60s", "Timeout of the request to redo.")
 	url := redo.String("url", "", "If set, change the URL of the request to the one specified here.")
 	verbose := redo.Bool("verbose", false, "Display request dump too.")
 	redo.Parse(os.Args[2:])
 
 	log.Printf("  request: %s", *request)
 	log.Printf("  host: %s", *host)
+	log.Printf("  timeout: %s", *timeout)
 	log.Printf("  url: %s", *url)
 	log.Printf("  verbose: %t", *verbose)
+
+	reqtout, err := time.ParseDuration(*timeout)
+	if err != nil {
+		log.Fatalf("Error while parsing timeout: %s", err)
+	}
 
 	content, err := ioutil.ReadFile(*request)
 	if err != nil {
@@ -206,8 +260,7 @@ func redo() {
 	}
 
 	var record responseRecord
-	err = json.Unmarshal(content, &record)
-	if err != nil {
+	if err = json.Unmarshal(content, &record); err != nil {
 		log.Fatalf("Error while unmarshalling request file: %s", err)
 	}
 
@@ -236,15 +289,15 @@ func redo() {
 		log.Printf("Request:\n%s\n", dump)
 	}
 
-	timeout, err := time.ParseDuration("60s")
 	client := http.Client{
-		Timeout: timeout,
+		Timeout: reqtout,
 	}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Fatalf("Error while sending request: %s", err)
 	}
 	defer resp.Body.Close()
+
 	dump, err := httputil.DumpResponse(resp, true)
 	if err != nil {
 		log.Fatalf("Error while dumping response: %s", err)
