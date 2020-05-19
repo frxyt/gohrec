@@ -153,7 +153,6 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 			log.Printf("%s\n", dump)
 		}
 		record.Body = fmt.Sprintf("%s", body)
-		defer r.Body.Close()
 	}
 
 	w.WriteHeader(http.StatusCreated)
