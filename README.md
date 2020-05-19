@@ -37,6 +37,7 @@
 * `--except-path <regexp>`: If set, record requests that don't match the specified URL path pattern.
 * `--index`: Build an index of hashes and their clear text representation.
 * `--listen <interface:port>`: Interface and port to listen (default: `:8080`).
+* `--max-body-size <bytes>`: Maximum size of body in bytes that will be recorded, `-1` to disallow limit (default: `-1`).
 * `--only-path <regexp>`: If set, record only requests that match the specified URL path pattern.
 * `--redact-body <regexp>`: If set, matching parts of the specified pattern in request body will be redacted.
 * `--redact-headers <regexp>`: If set, matching parts of the specified pattern in request headers will be redacted.

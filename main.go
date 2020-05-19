@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -25,6 +26,7 @@ import (
 type goHRec struct {
 	listen, dateFormat, redactString                string
 	onlyPath, exceptPath, redactBody, redactHeaders *regexp.Regexp
+	maxBodySize                                     int64
 	echo, index, verbose                            bool
 }
 
@@ -152,18 +154,16 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 		ContentLength: r.ContentLength,
 	}
 
-	if r.ContentLength > 0 {
-		body, err := ioutil.ReadAll(r.Body)
-		if err != nil {
-			ghr.log("Error while dumping body: %s", err)
-			dump, err := httputil.DumpRequest(r, true)
-			if err != nil {
-				log.Fatalf("Error while dumping response: %s", err)
-			}
-			log.Printf("%s\n", dump)
-		}
-		record.Body = fmt.Sprintf("%s", body)
+	var bodyReader io.Reader
+	bodyReader = r.Body
+	if ghr.maxBodySize != -1 {
+		bodyReader = io.LimitReader(r.Body, ghr.maxBodySize)
 	}
+	body, err := ioutil.ReadAll(bodyReader)
+	if err != nil {
+		ghr.log("Error while dumping body: %s", err)
+	}
+	record.Body = fmt.Sprintf("%s", body)
 
 	w.WriteHeader(http.StatusCreated)
 	if ghr.echo {
@@ -183,6 +183,7 @@ func record() {
 	dateFormat := record.String("date-format", "2006-01-02/15-04-05_", "Go format of the date used in record filenames, required subfolders are created automatically.")
 	onlyPath := record.String("only-path", "", "If set, record only requests that match the specified URL path pattern.")
 	exceptPath := record.String("except-path", "", "If set, record requests that don't match the specified URL path pattern.")
+	maxBodySize := record.Int64("max-body-size", -1, "Maximum size of body in bytes that will be recorded, `-1` to disallow limit.")
 	redactBody := record.String("redact-body", "", "If set, matching parts of the specified pattern in request body will be redacted.")
 	redactHeaders := record.String("redact-headers", "", "If set, matching parts of the specified pattern in request headers will be redacted.")
 	redactString := record.String("redact-string", "**REDACTED**", "Replacement string for redacted content.")
@@ -203,6 +204,7 @@ func record() {
 		dateFormat:    *dateFormat,
 		onlyPath:      makeRegexp(onlyPath),
 		exceptPath:    makeRegexp(exceptPath),
+		maxBodySize:   *maxBodySize,
 		redactBody:    makeRegexp(redactBody),
 		redactHeaders: makeRegexp(redactHeaders),
 		redactString:  *redactString,
@@ -214,6 +216,7 @@ func record() {
 	log.Printf("  listen: %s", gohrec.listen)
 	log.Printf("  only-path: %s", gohrec.onlyPath)
 	log.Printf("  except-path: %s", gohrec.exceptPath)
+	log.Printf("  max-body-size: %d", gohrec.maxBodySize)
 	log.Printf("  redact-body: %s", gohrec.redactBody)
 	log.Printf("  redact-headers: %s", gohrec.redactHeaders)
 	log.Printf("  redact-string: %s", gohrec.redactString)
