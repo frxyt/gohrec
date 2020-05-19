@@ -38,6 +38,9 @@
 * `--index`: Build an index of hashes and their clear text representation.
 * `--listen <interface:port>`: Interface and port to listen (default: `:8080`).
 * `--only-path <regexp>`: If set, record only requests that match the specified URL path pattern.
+* `--redact-body <regexp>`: If set, matching parts of the specified pattern in request body will be redacted.
+* `--redact-headers <regexp>`: If set, matching parts of the specified pattern in request headers will be redacted.
+* `--redact-string <replacement>`: Replacement string for redacted content, `${n}` represents the *n*-th submatch (default: `**REDACTED**`).
 * `--verbose`: Log processed request status.
 
 ### `gohrec redo`: redo a saved request

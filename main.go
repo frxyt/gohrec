@@ -23,9 +23,9 @@ import (
 )
 
 type goHRec struct {
-	listen, dateFormat                             string
-	onlyPath, exceptPath, redactBody, redactHeader *regexp.Regexp
-	echo, index, verbose                           bool
+	listen, dateFormat, redactString                string
+	onlyPath, exceptPath, redactBody, redactHeaders *regexp.Regexp
+	echo, index, verbose                            bool
 }
 
 type recordingTime struct {
@@ -63,6 +63,16 @@ func (ghr goHRec) log(format string, a ...interface{}) {
 
 func (ghr goHRec) save(req string, record responseRecord, rt recordingTime) {
 	rt.deferred = time.Now()
+
+	if ghr.redactHeaders != nil && record.Headers != nil && len(record.Headers) > 0 {
+		for i := 0; i < len(record.Headers); i++ {
+			record.Headers[i] = ghr.redactHeaders.ReplaceAllString(record.Headers[i], ghr.redactString)
+		}
+	}
+
+	if ghr.redactBody != nil {
+		record.Body = ghr.redactBody.ReplaceAllString(record.Body, ghr.redactString)
+	}
 
 	json, err := json.MarshalIndent(record, "", " ")
 	if err != nil {
@@ -174,7 +184,8 @@ func record() {
 	onlyPath := record.String("only-path", "", "If set, record only requests that match the specified URL path pattern.")
 	exceptPath := record.String("except-path", "", "If set, record requests that don't match the specified URL path pattern.")
 	redactBody := record.String("redact-body", "", "If set, matching parts of the specified pattern in request body will be redacted.")
-	redactHeader := record.String("redact-header", "", "If set, matching parts of the specified pattern in request headers will be redacted.")
+	redactHeaders := record.String("redact-headers", "", "If set, matching parts of the specified pattern in request headers will be redacted.")
+	redactString := record.String("redact-string", "**REDACTED**", "Replacement string for redacted content.")
 	echo := record.Bool("echo", false, "Echo logged request on calls.")
 	index := record.Bool("index", false, "Build an index of hashes and their clear text representation.")
 	verbose := record.Bool("verbose", false, "Log processed request status.")
@@ -188,22 +199,24 @@ func record() {
 	}
 
 	gohrec := goHRec{
-		listen:       *listen,
-		dateFormat:   *dateFormat,
-		onlyPath:     makeRegexp(onlyPath),
-		exceptPath:   makeRegexp(exceptPath),
-		redactBody:   makeRegexp(redactBody),
-		redactHeader: makeRegexp(redactHeader),
-		echo:         *echo,
-		index:        *index,
-		verbose:      *verbose,
+		listen:        *listen,
+		dateFormat:    *dateFormat,
+		onlyPath:      makeRegexp(onlyPath),
+		exceptPath:    makeRegexp(exceptPath),
+		redactBody:    makeRegexp(redactBody),
+		redactHeaders: makeRegexp(redactHeaders),
+		redactString:  *redactString,
+		echo:          *echo,
+		index:         *index,
+		verbose:       *verbose,
 	}
 
 	log.Printf("  listen: %s", gohrec.listen)
 	log.Printf("  only-path: %s", gohrec.onlyPath)
 	log.Printf("  except-path: %s", gohrec.exceptPath)
 	log.Printf("  redact-body: %s", gohrec.redactBody)
-	log.Printf("  redact-header: %s", gohrec.redactHeader)
+	log.Printf("  redact-headers: %s", gohrec.redactHeaders)
+	log.Printf("  redact-string: %s", gohrec.redactString)
 	log.Printf("  date-format: %s", gohrec.dateFormat)
 	log.Printf("  echo: %t", gohrec.echo)
 	log.Printf("  index: %t", gohrec.index)
