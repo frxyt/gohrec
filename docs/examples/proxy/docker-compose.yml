@@ -35,7 +35,7 @@ services:
       - ./log:/gohrec/log:rw
 
   traefik:
-    image: traefik:2.0
+    image: traefik:2.2
     command:
       - --api.insecure=true
       - --providers.docker=true
