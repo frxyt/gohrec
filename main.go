@@ -24,10 +24,10 @@ import (
 )
 
 type goHRec struct {
-	listen, dateFormat, redactString                string
+	listen, dateFormat, redactString, targetURL     string
 	onlyPath, exceptPath, redactBody, redactHeaders *regexp.Regexp
 	maxBodySize                                     int64
-	echo, index, verbose                            bool
+	echo, index, proxy, verbose                     bool
 }
 
 type recordingTime struct {
@@ -187,8 +187,10 @@ func record() {
 	redactBody := record.String("redact-body", "", "If set, matching parts of the specified pattern in request body will be redacted.")
 	redactHeaders := record.String("redact-headers", "", "If set, matching parts of the specified pattern in request headers will be redacted.")
 	redactString := record.String("redact-string", "**REDACTED**", "Replacement string for redacted content.")
+	targetURL := record.String("target-url", "", "Target URL used when proxy mode is enabled.")
 	echo := record.Bool("echo", false, "Echo logged request on calls.")
 	index := record.Bool("index", false, "Build an index of hashes and their clear text representation.")
+	proxy := record.Bool("proxy", false, "Enable proxy mode.")
 	verbose := record.Bool("verbose", false, "Log processed request status.")
 	record.Parse(os.Args[2:])
 
@@ -208,8 +210,10 @@ func record() {
 		redactBody:    makeRegexp(redactBody),
 		redactHeaders: makeRegexp(redactHeaders),
 		redactString:  *redactString,
+		targetURL:     *targetURL,
 		echo:          *echo,
 		index:         *index,
+		proxy:         *proxy,
 		verbose:       *verbose,
 	}
 
@@ -221,8 +225,10 @@ func record() {
 	log.Printf("  redact-headers: %s", gohrec.redactHeaders)
 	log.Printf("  redact-string: %s", gohrec.redactString)
 	log.Printf("  date-format: %s", gohrec.dateFormat)
+	log.Printf("  target-url: %s", gohrec.targetURL)
 	log.Printf("  echo: %t", gohrec.echo)
 	log.Printf("  index: %t", gohrec.index)
+	log.Printf("  proxy: %t", gohrec.proxy)
 	log.Printf("  verbose: %t", gohrec.verbose)
 
 	http.HandleFunc("/", gohrec.handler)
