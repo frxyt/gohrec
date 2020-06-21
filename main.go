@@ -7,7 +7,8 @@ package main
 import (
 	"bytes"
 	"crypto/md5"
-	"encoding/hex"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -99,6 +100,11 @@ func (ghr goHRec) saveRequest(req string, record requestRecord, rt recordingTime
 	if ghr.redactBody != nil {
 		record.Body = ghr.redactBody.ReplaceAllString(record.Body, ghr.redactString)
 	}
+
+	if record.ID == "" {
+		record.ID = makeRequestID(req, rt)
+	}
+
 	json, err := json.MarshalIndent(record, "", " ")
 	if err != nil {
 		ghr.log("Error while serializing record: %s", err)
@@ -114,10 +120,7 @@ func (ghr goHRec) saveRequest(req string, record requestRecord, rt recordingTime
 		ghr.log("Error while preparing save: %s", err)
 		return
 	}
-	if record.ID == "" {
-		record.ID = makeRequestID(req, rt)
-	}
-	filename := fmt.Sprintf("%s%s.request.json", filebase, record.ID)
+	filename := fmt.Sprintf("%s%09d.%s.request.json", filebase, rt.received.Nanosecond(), record.ID)
 
 	if err = ioutil.WriteFile(filename, json, 0644); err != nil {
 		ghr.log("Error while saving: %s", err)
@@ -149,10 +152,11 @@ func makeRequestName(r *http.Request) string {
 	return fmt.Sprintf("[%s] %s %s", r.Host, r.Method, r.URL.Path)
 }
 
-func (ghr goHRec) makeRequestID(req string, rt recordingTime) string {
+func makeRequestID(req string, rt recordingTime) string {
+	unixHash := make([]byte, 8)
+	binary.BigEndian.PutUint64(unixHash, uint64(rt.received.UnixNano()))
 	md5Hash := md5.Sum([]byte(req))
-	md5String := hex.EncodeToString(md5Hash[:])
-	return fmt.Sprintf("%s%09d_%s", rt.received.Format(ghr.dateFormat), rt.received.Nanosecond(), md5String)
+	return fmt.Sprintf("%s.%s", base64.RawURLEncoding.EncodeToString(unixHash), base64.RawURLEncoding.EncodeToString(md5Hash[:]))
 }
 
 func (ghr goHRec) isNotWhitelisted(r *http.Request, req string) bool {
