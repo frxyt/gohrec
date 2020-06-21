@@ -16,6 +16,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -24,9 +25,10 @@ import (
 )
 
 type goHRec struct {
-	listen, dateFormat, redactString, targetURL     string
+	listen, dateFormat, redactString                string
 	onlyPath, exceptPath, redactBody, redactHeaders *regexp.Regexp
 	maxBodySize                                     int64
+	targetURL                                       *url.URL
 	echo, index, proxy, verbose                     bool
 }
 
@@ -34,16 +36,38 @@ type recordingTime struct {
 	received, responded, deferred, saved time.Time
 }
 
+type baseInfo struct {
+	ID                          string
+	Date, DateUTC               time.Time
+	DateUnixNano                int64
+	Protocol                    string
+	Headers                     []string
+	ContentLength               int64
+	Body                        string
+	Trailers, TransferEncodings []string
+}
+
+type requestInfo struct {
+	RemoteAddr         string
+	Host, Method, Path string
+	Query              []string
+	URI                string
+}
+
+type responseInfo struct {
+	Status     string
+	StatusCode int
+	Compressed bool
+}
+
+type requestRecord struct {
+	baseInfo
+	requestInfo
+}
+
 type responseRecord struct {
-	Date, DateUTC                time.Time
-	DateUnixNano                 int64
-	RemoteAddr                   string
-	Host, Method, Path, Protocol string
-	Query                        []string
-	URI                          string
-	Headers                      []string
-	ContentLength                int64
-	Body                         string
+	baseInfo
+	responseInfo
 }
 
 func dumpValues(in map[string][]string) []string {
@@ -63,7 +87,7 @@ func (ghr goHRec) log(format string, a ...interface{}) {
 	}
 }
 
-func (ghr goHRec) save(req string, record responseRecord, rt recordingTime) {
+func (ghr goHRec) saveRequest(req string, record requestRecord, rt recordingTime) {
 	rt.deferred = time.Now()
 
 	if ghr.redactHeaders != nil && record.Headers != nil && len(record.Headers) > 0 {
@@ -75,7 +99,6 @@ func (ghr goHRec) save(req string, record responseRecord, rt recordingTime) {
 	if ghr.redactBody != nil {
 		record.Body = ghr.redactBody.ReplaceAllString(record.Body, ghr.redactString)
 	}
-
 	json, err := json.MarshalIndent(record, "", " ")
 	if err != nil {
 		ghr.log("Error while serializing record: %s", err)
@@ -91,16 +114,17 @@ func (ghr goHRec) save(req string, record responseRecord, rt recordingTime) {
 		ghr.log("Error while preparing save: %s", err)
 		return
 	}
-	md5Hash := md5.Sum([]byte(req))
-	md5String := hex.EncodeToString(md5Hash[:])
-	filename := fmt.Sprintf("%s%09d_%s.json", filebase, rt.received.Nanosecond(), md5String)
+	if record.ID == "" {
+		record.ID = makeRequestID(req, rt)
+	}
+	filename := fmt.Sprintf("%s%s.request.json", filebase, record.ID)
 
 	if err = ioutil.WriteFile(filename, json, 0644); err != nil {
 		ghr.log("Error while saving: %s", err)
 		return
 	}
 
-	if ghr.index {
+	/*if ghr.index {
 		if err = os.MkdirAll("index", 0755); err == nil {
 			if _, err := os.Stat(fmt.Sprintf("index/%s", md5String)); os.IsNotExist(err) {
 				if err := ioutil.WriteFile(fmt.Sprintf("index/%s", md5String), []byte(req), 0644); err != nil {
@@ -110,7 +134,7 @@ func (ghr goHRec) save(req string, record responseRecord, rt recordingTime) {
 		} else {
 			ghr.log("Error while creating `index` directory: %s", err)
 		}
-	}
+	}*/
 
 	rt.saved = time.Now()
 	ghr.log("Recorded: %s (%s) (responded: %d µs, saved: %d µs)",
@@ -121,38 +145,72 @@ func (ghr goHRec) save(req string, record responseRecord, rt recordingTime) {
 	)
 }
 
+func makeRequestName(r *http.Request) string {
+	return fmt.Sprintf("[%s] %s %s", r.Host, r.Method, r.URL.Path)
+}
+
+func (ghr goHRec) makeRequestID(req string, rt recordingTime) string {
+	md5Hash := md5.Sum([]byte(req))
+	md5String := hex.EncodeToString(md5Hash[:])
+	return fmt.Sprintf("%s%09d_%s", rt.received.Format(ghr.dateFormat), rt.received.Nanosecond(), md5String)
+}
+
+func (ghr goHRec) isNotWhitelisted(r *http.Request, req string) bool {
+	if ghr.onlyPath != nil && !ghr.onlyPath.MatchString(r.URL.Path) {
+		ghr.log("Skipped: doesn't match --only-path. (%s)", req)
+		return true
+	}
+	return false
+}
+
+func (ghr goHRec) isBlacklisted(r *http.Request, req string) bool {
+	if ghr.exceptPath != nil && ghr.exceptPath.MatchString(r.URL.Path) {
+		ghr.log("Skipped: match --except-path. (%s)", req)
+		return true
+	}
+	return false
+}
+
+func (ghr goHRec) prepareRequestRecord(r *http.Request, rt recordingTime) requestRecord {
+	return requestRecord{
+		baseInfo{
+			Date:              rt.received,
+			DateUTC:           rt.received.UTC(),
+			DateUnixNano:      rt.received.UnixNano(),
+			Protocol:          r.Proto,
+			Headers:           dumpValues(r.Header),
+			ContentLength:     r.ContentLength,
+			Trailers:          dumpValues(r.Trailer),
+			TransferEncodings: r.TransferEncoding,
+		},
+		requestInfo{
+			RemoteAddr: r.RemoteAddr,
+			Host:       r.Host,
+			Method:     r.Method,
+			Path:       r.URL.Path,
+			Query:      dumpValues(r.URL.Query()),
+			URI:        r.RequestURI,
+		},
+	}
+}
+
 func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 	rt := recordingTime{received: time.Now()}
-	req := fmt.Sprintf("[%s] %s %s", r.Host, r.Method, r.URL.Path)
+	req := makeRequestName(r)
 
-	if ghr.onlyPath != nil && !ghr.onlyPath.MatchString(r.URL.Path) {
+	if ghr.isNotWhitelisted(r, req) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, "Skipped: not whitelisted.")
-		ghr.log("Skipped: doesn't match --only-path. (%s)", req)
 		return
 	}
 
-	if ghr.exceptPath != nil && ghr.exceptPath.MatchString(r.URL.Path) {
+	if ghr.isBlacklisted(r, req) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, "Skipped: blacklisted.")
-		ghr.log("Skipped: match --except-path. (%s)", req)
 		return
 	}
 
-	record := responseRecord{
-		Date:          rt.received,
-		DateUTC:       rt.received.UTC(),
-		DateUnixNano:  rt.received.UnixNano(),
-		RemoteAddr:    r.RemoteAddr,
-		Host:          r.Host,
-		Method:        r.Method,
-		Path:          r.URL.Path,
-		Protocol:      r.Proto,
-		Query:         dumpValues(r.URL.Query()),
-		URI:           r.RequestURI,
-		Headers:       dumpValues(r.Header),
-		ContentLength: r.ContentLength,
-	}
+	record := ghr.prepareRequestRecord(r, rt)
 
 	var bodyReader io.Reader
 	bodyReader = r.Body
@@ -174,7 +232,114 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Recorded: %d µs.\n", time.Now().Sub(rt.received).Microseconds())
 
 	rt.responded = time.Now()
-	defer ghr.save(req, record, rt)
+	defer ghr.saveRequest(req, record, rt)
+}
+
+func (ghr goHRec) saveResponse(req string, record responseRecord, rt recordingTime, body io.ReadCloser) {
+	var bodyReader io.Reader
+	bodyReader = body
+	if ghr.maxBodySize != -1 {
+		bodyReader = io.LimitReader(body, ghr.maxBodySize)
+	}
+	bodyContent, err := ioutil.ReadAll(bodyReader)
+	if err != nil {
+		ghr.log("Error while dumping body: %s", err)
+	}
+	record.Body = fmt.Sprintf("%s", bodyContent)
+
+	//ghr.saveRequest(req, record, rt)
+}
+
+func (ghr goHRec) proxyModifyResponse(r *http.Response) error {
+	rt := recordingTime{received: time.Now()}
+	req := makeRequestName(r.Request)
+
+	reqid := r.Request.Header.Get("X-Gohrec-Request-Id")
+	if reqid == "" {
+		reqid = makeRequestID(req, rt)
+		ghr.log("Cannot find X-Gohrec-Request-Id in response request, generating a new one: %s", reqid)
+	}
+	r.Header.Add("X-Gohrec-Response-Id", reqid)
+
+	record := responseRecord{
+		baseInfo{
+			ID:                reqid,
+			Date:              rt.received,
+			DateUTC:           rt.received.UTC(),
+			DateUnixNano:      rt.received.UnixNano(),
+			Protocol:          r.Proto,
+			Headers:           dumpValues(r.Header),
+			ContentLength:     r.ContentLength,
+			Trailers:          dumpValues(r.Trailer),
+			TransferEncodings: r.TransferEncoding,
+		},
+		responseInfo{
+			Compressed: !r.Uncompressed,
+			Status:     r.Status,
+			StatusCode: r.StatusCode,
+		},
+	}
+
+	var body []byte
+	var err error
+	if r.Body != nil {
+		body, err = ioutil.ReadAll(r.Body)
+		if err != nil {
+			ghr.log("Error while reading body: %s", err)
+		}
+	}
+	r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
+
+	defer ghr.saveResponse(req, record, rt, ioutil.NopCloser(bytes.NewBuffer(body)))
+
+	return nil
+}
+
+func (ghr goHRec) proxyHandler(w http.ResponseWriter, r *http.Request) {
+	rt := recordingTime{received: time.Now()}
+	req := makeRequestName(r)
+
+	proxy := httputil.NewSingleHostReverseProxy(ghr.targetURL)
+
+	if ghr.isNotWhitelisted(r, req) || ghr.isBlacklisted(r, req) {
+		proxy.ServeHTTP(w, r)
+		return
+	}
+
+	reqid := makeRequestID(req, rt)
+	r.Header.Add("X-Gohrec-Request-Id", reqid)
+
+	record := ghr.prepareRequestRecord(r, rt)
+	record.ID = reqid
+
+	var body []byte
+	var err error
+	if r.Body != nil {
+		body, err = ioutil.ReadAll(r.Body)
+		if err != nil {
+			ghr.log("Error while reading body: %s", err)
+		}
+	}
+	r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
+
+	proxy.ModifyResponse = ghr.proxyModifyResponse
+	proxy.ServeHTTP(w, r)
+
+	var bodyReader io.Reader
+	bodyReader = ioutil.NopCloser(bytes.NewBuffer(body))
+	if ghr.maxBodySize != -1 {
+		bodyReader = io.LimitReader(r.Body, ghr.maxBodySize)
+	}
+	bodyContent, err := ioutil.ReadAll(bodyReader)
+	if err != nil {
+		ghr.log("Error while dumping body: %s", err)
+	}
+	record.Body = fmt.Sprintf("%s", bodyContent)
+
+	fmt.Fprintf(w, "Recorded: %d µs.\n", time.Now().Sub(rt.received).Microseconds())
+
+	rt.responded = time.Now()
+	defer ghr.saveRequest(req, record, rt)
 }
 
 func record() {
@@ -201,6 +366,17 @@ func record() {
 		return regexp.MustCompile(*s)
 	}
 
+	makeURL := func(s *string) *url.URL {
+		if s == nil || *s == "" {
+			return nil
+		}
+		url, err := url.Parse(*targetURL)
+		if err != nil {
+			log.Fatal(err)
+		}
+		return url
+	}
+
 	gohrec := goHRec{
 		listen:        *listen,
 		dateFormat:    *dateFormat,
@@ -210,7 +386,7 @@ func record() {
 		redactBody:    makeRegexp(redactBody),
 		redactHeaders: makeRegexp(redactHeaders),
 		redactString:  *redactString,
-		targetURL:     *targetURL,
+		targetURL:     makeURL(targetURL),
 		echo:          *echo,
 		index:         *index,
 		proxy:         *proxy,
@@ -231,7 +407,14 @@ func record() {
 	log.Printf("  proxy: %t", gohrec.proxy)
 	log.Printf("  verbose: %t", gohrec.verbose)
 
-	http.HandleFunc("/", gohrec.handler)
+	if gohrec.proxy {
+		if gohrec.targetURL == nil {
+			panic("--target-url is required when proxy mode is enabled!")
+		}
+		http.HandleFunc("/", gohrec.proxyHandler)
+	} else {
+		http.HandleFunc("/", gohrec.handler)
+	}
 	log.Fatal(http.ListenAndServe(gohrec.listen, nil))
 }
 
