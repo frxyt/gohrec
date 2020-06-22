@@ -89,13 +89,13 @@ func (arf *arrayRedactFlag) String() string {
 }
 
 type goHRec struct {
-	listen, dateFormat, redactString string
-	onlyPath, exceptPath             *regexp.Regexp
-	redactBody, redactHeaders        arrayRedactFlag
-	maxBodySize                      int64
-	targetURL                        *url.URL
-	echo, index, proxy, verbose      bool
-	indexLogger                      *log.Logger
+	listen, dateFormat          string
+	onlyPath, exceptPath        *regexp.Regexp
+	redactBody, redactHeaders   arrayRedactFlag
+	maxBodySize                 int64
+	targetURL                   *url.URL
+	echo, index, proxy, verbose bool
+	indexLogger                 *log.Logger
 }
 
 type recordingTime struct {
@@ -442,7 +442,6 @@ func record() {
 	onlyPath := record.String("only-path", "", "If set, record only requests that match the specified URL path pattern.")
 	exceptPath := record.String("except-path", "", "If set, record requests that don't match the specified URL path pattern.")
 	maxBodySize := record.Int64("max-body-size", -1, "Maximum size of body in bytes that will be recorded, `-1` to disallow limit.")
-	redactString := record.String("redact-string", "**REDACTED**", "Replacement string for redacted content.")
 	targetURL := record.String("target-url", "", "Target URL used when proxy mode is enabled.")
 	echo := record.Bool("echo", false, "Echo logged request on calls.")
 	index := record.Bool("index", false, "Build an index of hashes and their clear text representation.")
@@ -482,7 +481,6 @@ func record() {
 		maxBodySize:   *maxBodySize,
 		redactBody:    redactBody,
 		redactHeaders: redactHeaders,
-		redactString:  *redactString,
 		targetURL:     makeURL(targetURL),
 		echo:          *echo,
 		index:         *index,
@@ -505,7 +503,6 @@ func record() {
 	log.Printf("  max-body-size: %d", gohrec.maxBodySize)
 	log.Printf("  redact-body: %s", gohrec.redactBody.String())
 	log.Printf("  redact-headers: %s", gohrec.redactHeaders.String())
-	log.Printf("  redact-string: %s", gohrec.redactString)
 	log.Printf("  date-format: %s", gohrec.dateFormat)
 	log.Printf("  target-url: %s", gohrec.targetURL)
 	log.Printf("  echo: %t", gohrec.echo)
