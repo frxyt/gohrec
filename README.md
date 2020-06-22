@@ -1,10 +1,10 @@
 # GoHRec :: HTTP Request Recorder written in Golang
 
-![Docker Cloud Automated build](https://img.shields.io/docker/cloud/automated/frxyt/gohrec.svg)
-![Docker Cloud Build Status](https://img.shields.io/docker/cloud/build/frxyt/gohrec.svg)
-![Docker Pulls](https://img.shields.io/docker/pulls/frxyt/gohrec.svg)
-![GitHub issues](https://img.shields.io/github/issues/frxyt/gohrec.svg)
-![GitHub last commit](https://img.shields.io/github/last-commit/frxyt/gohrec.svg)
+[![Docker Cloud Automated build](https://img.shields.io/docker/cloud/automated/frxyt/gohrec.svg)](https://hub.docker.com/r/frxyt/gohrec/builds)
+[![Docker Cloud Build Status](https://img.shields.io/docker/cloud/build/frxyt/gohrec.svg)](https://hub.docker.com/r/frxyt/gohrec/builds)
+[![Docker Pulls](https://img.shields.io/docker/pulls/frxyt/gohrec.svg)](https://hub.docker.com/r/frxyt/gohrec)
+[![GitHub issues](https://img.shields.io/github/issues/frxyt/gohrec.svg)](https://github.com/frxyt/gohrec/issues)
+[![GitHub last commit](https://img.shields.io/github/last-commit/frxyt/gohrec.svg)](https://github.com/frxyt/gohrec/commits/master)
 
 > GoHRec logs HTTP requests it receive as JSON files, with all their details (including headers and body) and is able to redo these saved requests.
 
@@ -39,9 +39,10 @@
 * `--listen <interface:port>`: Interface and port to listen (default: `:8080`).
 * `--max-body-size <bytes>`: Maximum size of body in bytes that will be recorded, `-1` to disallow limit (default: `-1`).
 * `--only-path <regexp>`: If set, record only requests that match the specified URL path pattern.
-* `--redact-body <regexp>`: If set, matching parts of the specified pattern in request body will be redacted.
-* `--redact-headers <regexp>`: If set, matching parts of the specified pattern in request headers will be redacted.
-* `--redact-string <replacement>`: Replacement string for redacted content, `${n}` represents the *n*-th submatch (default: `**REDACTED**`).
+* `--proxy`: Enable proxy mode.
+* `--redact-body <regexp>[/<replacement>]`: If set, matching parts of the specified pattern in request body will be redacted.
+* `--redact-headers <regexp>>[/<replacement>]`: If set, matching parts of the specified pattern in request headers will be redacted.
+* `--target-url <url>`: Target URL used when proxy mode is enabled.
 * `--verbose`: Log processed request status.
 
 ### `gohrec redo`: redo a saved request
