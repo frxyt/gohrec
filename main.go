@@ -21,6 +21,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -94,6 +95,7 @@ type goHRec struct {
 	maxBodySize                      int64
 	targetURL                        *url.URL
 	echo, index, proxy, verbose      bool
+	indexLogger                      *log.Logger
 }
 
 type recordingTime struct {
@@ -173,7 +175,7 @@ func (ghr goHRec) redactRecord(record *baseInfo) {
 	}
 }
 
-func (ghr goHRec) saveJSON(json []byte, id string, rt recordingTime, suffix string) (string, error) {
+func (ghr goHRec) saveJSON(json []byte, id string, rt recordingTime, suffix string, req string) (string, error) {
 	filebase := fmt.Sprintf("%s", rt.received.Format(ghr.dateFormat))
 	filepath := filebase
 	if i := strings.LastIndex(filepath, "/"); i > -1 {
@@ -190,17 +192,9 @@ func (ghr goHRec) saveJSON(json []byte, id string, rt recordingTime, suffix stri
 		return filename, err
 	}
 
-	/*if ghr.index {
-		if err = os.MkdirAll("index", 0755); err == nil {
-			if _, err := os.Stat(fmt.Sprintf("index/%s", md5String)); os.IsNotExist(err) {
-				if err := ioutil.WriteFile(fmt.Sprintf("index/%s", md5String), []byte(req), 0644); err != nil {
-					ghr.log("Error while creating index: %s", err)
-				}
-			}
-		} else {
-			ghr.log("Error while creating `index` directory: %s", err)
-		}
-	}*/
+	if ghr.index {
+		ghr.indexLogger.Printf("%s\t%s\t%s", id, filename, req)
+	}
 
 	return filename, nil
 }
@@ -220,7 +214,7 @@ func (ghr goHRec) saveRequest(req string, record requestRecord, rt recordingTime
 		return
 	}
 
-	filename, err := ghr.saveJSON(json, record.ID, rt, "request")
+	filename, err := ghr.saveJSON(json, record.ID, rt, "request", req)
 
 	rt.saved = time.Now()
 	ghr.log("Recorded: %s (%s) (responded: %d µs, saved: %d µs)",
@@ -346,7 +340,7 @@ func (ghr goHRec) saveResponse(req string, record responseRecord, rt recordingTi
 		return
 	}
 
-	filename, err := ghr.saveJSON(json, record.ID, rt, "response")
+	filename, err := ghr.saveJSON(json, record.ID, rt, "response", req)
 	ghr.log("Recorded: %s (%s)", filename, req)
 }
 
@@ -408,6 +402,7 @@ func (ghr goHRec) proxyHandler(w http.ResponseWriter, r *http.Request) {
 
 	reqid := makeRequestID(req, rt)
 	r.Header.Add("X-Gohrec-Request-Id", reqid)
+	r.Header.Add("X-Gohrec-Request-Received", strconv.FormatInt(rt.received.UnixNano(), 10))
 
 	record := ghr.prepareRequestRecord(r, rt)
 	record.ID = reqid
@@ -495,12 +490,21 @@ func record() {
 		verbose:       *verbose,
 	}
 
+	if gohrec.index {
+		if f, err := os.OpenFile("index.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err != nil {
+			log.Fatalf("Error while creating index.log: %s", err)
+		} else {
+			gohrec.indexLogger = log.New(f, "", log.LUTC)
+			defer f.Close()
+		}
+	}
+
 	log.Printf("  listen: %s", gohrec.listen)
 	log.Printf("  only-path: %s", gohrec.onlyPath)
 	log.Printf("  except-path: %s", gohrec.exceptPath)
 	log.Printf("  max-body-size: %d", gohrec.maxBodySize)
-	log.Printf("  redact-body: %v", gohrec.redactBody)
-	log.Printf("  redact-headers: %v", gohrec.redactHeaders)
+	log.Printf("  redact-body: %s", gohrec.redactBody.String())
+	log.Printf("  redact-headers: %s", gohrec.redactHeaders.String())
 	log.Printf("  redact-string: %s", gohrec.redactString)
 	log.Printf("  date-format: %s", gohrec.dateFormat)
 	log.Printf("  target-url: %s", gohrec.targetURL)
