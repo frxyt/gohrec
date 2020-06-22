@@ -2,6 +2,7 @@
 /*-*-*
 /__*
 /*.exe
+/docs/examples/**/log
 /gohrec
 /index
 /log

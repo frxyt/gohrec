@@ -1,0 +1,57 @@
+version: '3.7'
+   
+networks:
+  public:
+    name: public
+ 
+services:
+
+  app:
+    image: frxyt/php-app:latest
+    environment: 
+      - TZ=Europe/Paris
+    networks:
+      - public
+    volumes:
+      - ./:/app:ro
+
+  gohrec:
+    image: frxyt/gohrec:latest
+    command:
+      - record
+      - --index
+      - --proxy
+      - --target-url=http://app
+      - --verbose
+    depends_on:
+      - app
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.app.entrypoints=http
+      - traefik.http.routers.app.rule=Host(`localhost`)
+    networks:
+      - public
+    volumes:
+      - ./log:/gohrec/log:rw
+
+  traefik:
+    image: traefik:2.2
+    command:
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=public
+      - --entrypoints.http.address=:80
+    depends_on:
+      - gohrec
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.traefik.entrypoints=http
+      - traefik.http.services.traefik.loadbalancer.server.port=8080
+      - traefik.http.routers.traefik.rule=Host(`traefik.localhost`)
+    networks: 
+      - public
+    ports:
+      - 127.0.0.1:80:80
+    volumes:
+      - //var/run/docker.sock:/var/run/docker.sock:ro
