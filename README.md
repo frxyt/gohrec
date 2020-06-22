@@ -39,9 +39,10 @@
 * `--listen <interface:port>`: Interface and port to listen (default: `:8080`).
 * `--max-body-size <bytes>`: Maximum size of body in bytes that will be recorded, `-1` to disallow limit (default: `-1`).
 * `--only-path <regexp>`: If set, record only requests that match the specified URL path pattern.
-* `--redact-body <regexp>`: If set, matching parts of the specified pattern in request body will be redacted.
-* `--redact-headers <regexp>`: If set, matching parts of the specified pattern in request headers will be redacted.
-* `--redact-string <replacement>`: Replacement string for redacted content, `${n}` represents the *n*-th submatch (default: `**REDACTED**`).
+* `--proxy`: Enable proxy mode.
+* `--redact-body <regexp>[/<replacement>]`: If set, matching parts of the specified pattern in request body will be redacted.
+* `--redact-headers <regexp>>[/<replacement>]`: If set, matching parts of the specified pattern in request headers will be redacted.
+* `--target-url <url>`: Target URL used when proxy mode is enabled.
 * `--verbose`: Log processed request status.
 
 ### `gohrec redo`: redo a saved request
