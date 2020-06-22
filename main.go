@@ -88,8 +88,10 @@ func (ghr goHRec) log(format string, a ...interface{}) {
 	}
 }
 
-func (ghr goHRec) saveRequest(req string, record requestRecord, rt recordingTime) {
-	rt.deferred = time.Now()
+func (ghr goHRec) redactRecord(record *baseInfo) {
+	if record == nil {
+		return
+	}
 
 	if ghr.redactHeaders != nil && record.Headers != nil && len(record.Headers) > 0 {
 		for i := 0; i < len(record.Headers); i++ {
@@ -100,31 +102,23 @@ func (ghr goHRec) saveRequest(req string, record requestRecord, rt recordingTime
 	if ghr.redactBody != nil {
 		record.Body = ghr.redactBody.ReplaceAllString(record.Body, ghr.redactString)
 	}
+}
 
-	if record.ID == "" {
-		record.ID = makeRequestID(req, rt)
-	}
-
-	json, err := json.MarshalIndent(record, "", " ")
-	if err != nil {
-		ghr.log("Error while serializing record: %s", err)
-		return
-	}
-
+func (ghr goHRec) saveJSON(json []byte, id string, rt recordingTime, suffix string) (string, error) {
 	filebase := fmt.Sprintf("%s", rt.received.Format(ghr.dateFormat))
 	filepath := filebase
 	if i := strings.LastIndex(filepath, "/"); i > -1 {
 		filepath = filebase[:i]
 	}
-	if err = os.MkdirAll(filepath, 0755); err != nil {
+	if err := os.MkdirAll(filepath, 0755); err != nil {
 		ghr.log("Error while preparing save: %s", err)
-		return
+		return filepath, err
 	}
-	filename := fmt.Sprintf("%s%09d.%s.request.json", filebase, rt.received.Nanosecond(), record.ID)
+	filename := fmt.Sprintf("%s%09d.%s.%s.json", filebase, rt.received.Nanosecond(), id, suffix)
 
-	if err = ioutil.WriteFile(filename, json, 0644); err != nil {
+	if err := ioutil.WriteFile(filename, json, 0644); err != nil {
 		ghr.log("Error while saving: %s", err)
-		return
+		return filename, err
 	}
 
 	/*if ghr.index {
@@ -138,6 +132,26 @@ func (ghr goHRec) saveRequest(req string, record requestRecord, rt recordingTime
 			ghr.log("Error while creating `index` directory: %s", err)
 		}
 	}*/
+
+	return filename, nil
+}
+
+func (ghr goHRec) saveRequest(req string, record requestRecord, rt recordingTime) {
+	rt.deferred = time.Now()
+
+	ghr.redactRecord(&record.baseInfo)
+
+	if record.ID == "" {
+		record.ID = makeRequestID(req, rt)
+	}
+
+	json, err := json.MarshalIndent(record, "", " ")
+	if err != nil {
+		ghr.log("Error while serializing record: %s", err)
+		return
+	}
+
+	filename, err := ghr.saveJSON(json, record.ID, rt, "request")
 
 	rt.saved = time.Now()
 	ghr.log("Recorded: %s (%s) (responded: %d µs, saved: %d µs)",
@@ -251,7 +265,20 @@ func (ghr goHRec) saveResponse(req string, record responseRecord, rt recordingTi
 	}
 	record.Body = fmt.Sprintf("%s", bodyContent)
 
-	//ghr.saveRequest(req, record, rt)
+	ghr.redactRecord(&record.baseInfo)
+
+	if record.ID == "" {
+		record.ID = makeRequestID(req, rt)
+	}
+
+	json, err := json.MarshalIndent(record, "", " ")
+	if err != nil {
+		ghr.log("Error while serializing record: %s", err)
+		return
+	}
+
+	filename, err := ghr.saveJSON(json, record.ID, rt, "response")
+	ghr.log("Recorded: %s (%s)", filename, req)
 }
 
 func (ghr goHRec) proxyModifyResponse(r *http.Response) error {
@@ -339,8 +366,6 @@ func (ghr goHRec) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		ghr.log("Error while dumping body: %s", err)
 	}
 	record.Body = fmt.Sprintf("%s", bodyContent)
-
-	fmt.Fprintf(w, "Recorded: %d µs.\n", time.Now().Sub(rt.received).Microseconds())
 
 	rt.responded = time.Now()
 	defer ghr.saveRequest(req, record, rt)
