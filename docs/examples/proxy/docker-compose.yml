@@ -21,6 +21,10 @@ services:
       - record
       - --index
       - --proxy
+      - --redact-body=(<secret>).*(<secret />)/$$1**REDACTED**$$2
+      - --redact-body=p@s$$w0rD
+      - "--redact-headers=((X-Real-Ip)|(User-Agent):)(.*)/$$1 **REDACTED**"
+      - "--redact-headers=(X-Forwarded-For:)\\s*([0-9.]+,)*\\s*([0-9.]+)/$$1 **REDACTED**, $$3"
       - --target-url=http://app
       - --verbose
     depends_on:

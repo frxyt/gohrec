@@ -25,12 +25,75 @@ import (
 	"time"
 )
 
+const redactedString = "**REDACTED**"
+
+type redactFlag struct {
+	regex   regexp.Regexp
+	replace string
+}
+
+func (rf *redactFlag) Redact(text string) string {
+	return rf.regex.ReplaceAllString(text, rf.replace)
+}
+
+func (rf *redactFlag) Set(value string) error {
+	index := strings.LastIndex(value, "/")
+	var pattern string
+	if index > -1 {
+		pattern = value[:index]
+		rf.replace = value[index+1:]
+	} else {
+		pattern = value
+		rf.replace = redactedString
+	}
+	regex, err := regexp.Compile(pattern)
+	if err != nil {
+		return err
+	}
+	rf.regex = *regex
+	return nil
+}
+
+func (rf *redactFlag) String() string {
+	return fmt.Sprintf("%s/%s", rf.regex.String(), rf.replace)
+}
+
+type arrayRedactFlag []redactFlag
+
+func (arf *arrayRedactFlag) Redact(text string) string {
+	for _, item := range *arf {
+		text = item.Redact(text)
+	}
+	return text
+}
+
+func (arf *arrayRedactFlag) Set(value string) error {
+	item := redactFlag{}
+	if err := item.Set(value); err != nil {
+		return err
+	}
+	*arf = append(*arf, item)
+	return nil
+}
+
+func (arf *arrayRedactFlag) String() string {
+	if arf == nil {
+		return "[]"
+	}
+	out := []string{}
+	for _, item := range *arf {
+		out = append(out, "`"+item.String()+"`")
+	}
+	return "[ " + strings.Join(out, ", ") + " ]"
+}
+
 type goHRec struct {
-	listen, dateFormat, redactString                string
-	onlyPath, exceptPath, redactBody, redactHeaders *regexp.Regexp
-	maxBodySize                                     int64
-	targetURL                                       *url.URL
-	echo, index, proxy, verbose                     bool
+	listen, dateFormat, redactString string
+	onlyPath, exceptPath             *regexp.Regexp
+	redactBody, redactHeaders        arrayRedactFlag
+	maxBodySize                      int64
+	targetURL                        *url.URL
+	echo, index, proxy, verbose      bool
 }
 
 type recordingTime struct {
@@ -95,12 +158,18 @@ func (ghr goHRec) redactRecord(record *baseInfo) {
 
 	if ghr.redactHeaders != nil && record.Headers != nil && len(record.Headers) > 0 {
 		for i := 0; i < len(record.Headers); i++ {
-			record.Headers[i] = ghr.redactHeaders.ReplaceAllString(record.Headers[i], ghr.redactString)
+			record.Headers[i] = ghr.redactHeaders.Redact(record.Headers[i])
+		}
+	}
+
+	if ghr.redactHeaders != nil && record.Trailers != nil && len(record.Trailers) > 0 {
+		for i := 0; i < len(record.Trailers); i++ {
+			record.Trailers[i] = ghr.redactHeaders.Redact(record.Trailers[i])
 		}
 	}
 
 	if ghr.redactBody != nil {
-		record.Body = ghr.redactBody.ReplaceAllString(record.Body, ghr.redactString)
+		record.Body = ghr.redactBody.Redact(record.Body)
 	}
 }
 
@@ -378,14 +447,18 @@ func record() {
 	onlyPath := record.String("only-path", "", "If set, record only requests that match the specified URL path pattern.")
 	exceptPath := record.String("except-path", "", "If set, record requests that don't match the specified URL path pattern.")
 	maxBodySize := record.Int64("max-body-size", -1, "Maximum size of body in bytes that will be recorded, `-1` to disallow limit.")
-	redactBody := record.String("redact-body", "", "If set, matching parts of the specified pattern in request body will be redacted.")
-	redactHeaders := record.String("redact-headers", "", "If set, matching parts of the specified pattern in request headers will be redacted.")
 	redactString := record.String("redact-string", "**REDACTED**", "Replacement string for redacted content.")
 	targetURL := record.String("target-url", "", "Target URL used when proxy mode is enabled.")
 	echo := record.Bool("echo", false, "Echo logged request on calls.")
 	index := record.Bool("index", false, "Build an index of hashes and their clear text representation.")
 	proxy := record.Bool("proxy", false, "Enable proxy mode.")
 	verbose := record.Bool("verbose", false, "Log processed request status.")
+
+	var redactBody arrayRedactFlag
+	var redactHeaders arrayRedactFlag
+	record.Var(&redactBody, "redact-body", "If set, matching parts of the specified pattern in request body will be redacted. Can contain a specific replacement string after a `/`.")
+	record.Var(&redactHeaders, "redact-headers", "If set, matching parts of the specified pattern in request headers will be redacted. Can contain a specific replacement string after a `/`.")
+
 	record.Parse(os.Args[2:])
 
 	makeRegexp := func(s *string) *regexp.Regexp {
@@ -412,8 +485,8 @@ func record() {
 		onlyPath:      makeRegexp(onlyPath),
 		exceptPath:    makeRegexp(exceptPath),
 		maxBodySize:   *maxBodySize,
-		redactBody:    makeRegexp(redactBody),
-		redactHeaders: makeRegexp(redactHeaders),
+		redactBody:    redactBody,
+		redactHeaders: redactHeaders,
 		redactString:  *redactString,
 		targetURL:     makeURL(targetURL),
 		echo:          *echo,
@@ -426,8 +499,8 @@ func record() {
 	log.Printf("  only-path: %s", gohrec.onlyPath)
 	log.Printf("  except-path: %s", gohrec.exceptPath)
 	log.Printf("  max-body-size: %d", gohrec.maxBodySize)
-	log.Printf("  redact-body: %s", gohrec.redactBody)
-	log.Printf("  redact-headers: %s", gohrec.redactHeaders)
+	log.Printf("  redact-body: %v", gohrec.redactBody)
+	log.Printf("  redact-headers: %v", gohrec.redactHeaders)
 	log.Printf("  redact-string: %s", gohrec.redactString)
 	log.Printf("  date-format: %s", gohrec.dateFormat)
 	log.Printf("  target-url: %s", gohrec.targetURL)
