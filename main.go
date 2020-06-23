@@ -15,6 +15,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -56,7 +57,10 @@ func (rf *redactFlag) Set(value string) error {
 }
 
 func (rf *redactFlag) String() string {
-	return fmt.Sprintf("%s/%s", rf.regex.String(), rf.replace)
+	if str := fmt.Sprintf("%s/%s", rf.regex.String(), rf.replace); str != "/" {
+		return str
+	}
+	return "regex[/replacement]"
 }
 
 type arrayRedactFlag []redactFlag
@@ -233,7 +237,14 @@ func makeRequestID(req string, rt recordingTime) string {
 	unixHash := make([]byte, 8)
 	binary.BigEndian.PutUint64(unixHash, uint64(rt.received.UnixNano()))
 	md5Hash := md5.Sum([]byte(req))
-	return fmt.Sprintf("%s.%s", base64.RawURLEncoding.EncodeToString(unixHash), base64.RawURLEncoding.EncodeToString(md5Hash[:]))
+	randHash := make([]byte, 4)
+	binary.BigEndian.PutUint32(randHash, rand.Uint32())
+	return fmt.Sprintf(
+		"%s.%s.%s",
+		base64.RawURLEncoding.EncodeToString(unixHash),
+		base64.RawURLEncoding.EncodeToString(md5Hash[:]),
+		base64.RawURLEncoding.EncodeToString(randHash),
+	)
 }
 
 func (ghr goHRec) isNotWhitelisted(r *http.Request, req string) bool {
@@ -509,6 +520,8 @@ func record() {
 	log.Printf("  index: %t", gohrec.index)
 	log.Printf("  proxy: %t", gohrec.proxy)
 	log.Printf("  verbose: %t", gohrec.verbose)
+
+	rand.Seed(time.Now().UnixNano())
 
 	if gohrec.proxy {
 		if gohrec.targetURL == nil {
