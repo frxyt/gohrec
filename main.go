@@ -140,6 +140,11 @@ type responseRecord struct {
 	responseInfo
 }
 
+type gohrecRecord struct {
+	Request  *requestRecord
+	Response *responseRecord
+}
+
 func dumpValues(in map[string][]string) []string {
 	out := []string{}
 	for name, values := range in {
@@ -210,7 +215,7 @@ func (ghr goHRec) saveRequest(req string, record requestRecord, rt recordingTime
 		record.ID = makeRequestID(req, rt.requestReceived)
 	}
 
-	json, err := json.MarshalIndent(record, "", " ")
+	json, err := json.MarshalIndent(gohrecRecord{Request: &record}, "", " ")
 	if err != nil {
 		ghr.log("Error while serializing record: %s", err)
 		return
@@ -335,7 +340,7 @@ func (ghr goHRec) saveResponse(req string, record responseRecord, rt recordingTi
 		record.ID = makeRequestID(req, rt.requestReceived)
 	}
 
-	json, err := json.MarshalIndent(record, "", " ")
+	json, err := json.MarshalIndent(gohrecRecord{Response: &record}, "", " ")
 	if err != nil {
 		ghr.log("Error while serializing record: %s", err)
 		return
@@ -557,15 +562,23 @@ func redo() {
 		log.Fatalf("Error while reading request file: %s", err)
 	}
 
-	type responseRecord struct {
+	type redoRequestRecord struct {
 		Body, Host, Method, URI string
 		Headers                 []string
 	}
 
-	var record responseRecord
-	if err = json.Unmarshal(content, &record); err != nil {
+	type redoRecord struct {
+		Request *redoRequestRecord
+	}
+
+	var redoRec redoRecord
+	if err = json.Unmarshal(content, &redoRec); err != nil {
 		log.Fatalf("Error while unmarshalling request file: %s", err)
 	}
+	if redoRec.Request == nil {
+		log.Fatalln("No request present.")
+	}
+	record := redoRec.Request
 
 	if *host != "" {
 		record.Host = *host
