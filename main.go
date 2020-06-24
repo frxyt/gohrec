@@ -230,21 +230,16 @@ func (ghr goHRec) saveRequest(req string, record requestRecord, rt recordingTime
 }
 
 func makeRequestName(r *http.Request) string {
-	return fmt.Sprintf("[%s] %s %s", r.Host, r.Method, r.URL.Path)
+	return fmt.Sprintf("[%s] %s http://%s%s", r.RemoteAddr, r.Method, r.Host, r.RequestURI)
 }
 
 func makeRequestID(req string, rt recordingTime) string {
 	unixHash := make([]byte, 8)
 	binary.BigEndian.PutUint64(unixHash, uint64(rt.received.UnixNano()))
-	md5Hash := md5.Sum([]byte(req))
 	randHash := make([]byte, 4)
 	binary.BigEndian.PutUint32(randHash, rand.Uint32())
-	return fmt.Sprintf(
-		"%s.%s.%s",
-		base64.RawURLEncoding.EncodeToString(unixHash),
-		base64.RawURLEncoding.EncodeToString(md5Hash[:]),
-		base64.RawURLEncoding.EncodeToString(randHash),
-	)
+	md5Hash := md5.Sum([]byte(req))
+	return base64.RawURLEncoding.EncodeToString(append(append(unixHash[:], randHash[:]...), md5Hash[:]...))
 }
 
 func (ghr goHRec) isNotWhitelisted(r *http.Request, req string) bool {
