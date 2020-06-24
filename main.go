@@ -103,7 +103,7 @@ type goHRec struct {
 }
 
 type recordingTime struct {
-	received, responded, deferred, saved time.Time
+	requestReceived, requestForwarded, responseReceived, responseSent time.Time
 }
 
 type baseInfo struct {
@@ -179,8 +179,8 @@ func (ghr goHRec) redactRecord(record *baseInfo) {
 	}
 }
 
-func (ghr goHRec) saveJSON(json []byte, id string, rt recordingTime, suffix string, req string) (string, error) {
-	filebase := fmt.Sprintf("%s", rt.received.Format(ghr.dateFormat))
+func (ghr goHRec) saveJSON(json []byte, id string, received time.Time, suffix string, req string) (string, error) {
+	filebase := fmt.Sprintf("%s", received.Format(ghr.dateFormat))
 	filepath := filebase
 	if i := strings.LastIndex(filepath, "/"); i > -1 {
 		filepath = filebase[:i]
@@ -189,7 +189,7 @@ func (ghr goHRec) saveJSON(json []byte, id string, rt recordingTime, suffix stri
 		ghr.log("Error while preparing save: %s", err)
 		return filepath, err
 	}
-	filename := fmt.Sprintf("%s%09d.%s.%s.json", filebase, rt.received.Nanosecond(), id, suffix)
+	filename := fmt.Sprintf("%s%09d.%s.%s.json", filebase, received.Nanosecond(), id, suffix)
 
 	if err := ioutil.WriteFile(filename, json, 0644); err != nil {
 		ghr.log("Error while saving: %s", err)
@@ -204,12 +204,10 @@ func (ghr goHRec) saveJSON(json []byte, id string, rt recordingTime, suffix stri
 }
 
 func (ghr goHRec) saveRequest(req string, record requestRecord, rt recordingTime) {
-	rt.deferred = time.Now()
-
 	ghr.redactRecord(&record.baseInfo)
 
 	if record.ID == "" {
-		record.ID = makeRequestID(req, rt)
+		record.ID = makeRequestID(req, rt.requestReceived)
 	}
 
 	json, err := json.MarshalIndent(record, "", " ")
@@ -218,14 +216,11 @@ func (ghr goHRec) saveRequest(req string, record requestRecord, rt recordingTime
 		return
 	}
 
-	filename, err := ghr.saveJSON(json, record.ID, rt, "request", req)
+	filename, err := ghr.saveJSON(json, record.ID, rt.requestReceived, "request", req)
 
-	rt.saved = time.Now()
-	ghr.log("Recorded: %s (%s) (responded: %d µs, saved: %d µs)",
+	ghr.log("Recorded: %s (%s)",
 		filename,
 		req,
-		rt.responded.Sub(rt.received).Microseconds(),
-		rt.saved.Sub(rt.deferred).Microseconds(),
 	)
 }
 
@@ -233,9 +228,9 @@ func makeRequestName(r *http.Request) string {
 	return fmt.Sprintf("[%s] %s http://%s%s", r.RemoteAddr, r.Method, r.Host, r.RequestURI)
 }
 
-func makeRequestID(req string, rt recordingTime) string {
+func makeRequestID(req string, received time.Time) string {
 	unixHash := make([]byte, 8)
-	binary.BigEndian.PutUint64(unixHash, uint64(rt.received.UnixNano()))
+	binary.BigEndian.PutUint64(unixHash, uint64(received.UnixNano()))
 	randHash := make([]byte, 4)
 	binary.BigEndian.PutUint32(randHash, rand.Uint32())
 	md5Hash := md5.Sum([]byte(req))
@@ -261,9 +256,9 @@ func (ghr goHRec) isBlacklisted(r *http.Request, req string) bool {
 func (ghr goHRec) prepareRequestRecord(r *http.Request, rt recordingTime) requestRecord {
 	return requestRecord{
 		baseInfo{
-			Date:              rt.received,
-			DateUTC:           rt.received.UTC(),
-			DateUnixNano:      rt.received.UnixNano(),
+			Date:              rt.requestReceived,
+			DateUTC:           rt.requestReceived.UTC(),
+			DateUnixNano:      rt.requestReceived.UnixNano(),
 			Protocol:          r.Proto,
 			Headers:           dumpValues(r.Header),
 			ContentLength:     r.ContentLength,
@@ -282,7 +277,7 @@ func (ghr goHRec) prepareRequestRecord(r *http.Request, rt recordingTime) reques
 }
 
 func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
-	rt := recordingTime{received: time.Now()}
+	rt := recordingTime{requestReceived: time.Now()}
 	req := makeRequestName(r)
 
 	if ghr.isNotWhitelisted(r, req) {
@@ -316,9 +311,9 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(w, "%s\n", json)
 		}
 	}
-	fmt.Fprintf(w, "Recorded: %d µs.\n", time.Now().Sub(rt.received).Microseconds())
+	fmt.Fprintln(w, "Recorded.")
 
-	rt.responded = time.Now()
+	rt.responseSent = time.Now()
 	defer ghr.saveRequest(req, record, rt)
 }
 
@@ -337,7 +332,7 @@ func (ghr goHRec) saveResponse(req string, record responseRecord, rt recordingTi
 	ghr.redactRecord(&record.baseInfo)
 
 	if record.ID == "" {
-		record.ID = makeRequestID(req, rt)
+		record.ID = makeRequestID(req, rt.requestReceived)
 	}
 
 	json, err := json.MarshalIndent(record, "", " ")
@@ -346,17 +341,24 @@ func (ghr goHRec) saveResponse(req string, record responseRecord, rt recordingTi
 		return
 	}
 
-	filename, err := ghr.saveJSON(json, record.ID, rt, "response", req)
+	filename, err := ghr.saveJSON(json, record.ID, rt.requestReceived, "response", req)
 	ghr.log("Recorded: %s (%s)", filename, req)
 }
 
 func (ghr goHRec) proxyModifyResponse(r *http.Response) error {
-	rt := recordingTime{received: time.Now()}
+	rt := recordingTime{responseReceived: time.Now()}
 	req := makeRequestName(r.Request)
+
+	rt.requestReceived = rt.responseReceived
+	if reqRecHeader := r.Request.Header.Get("X-Gohrec-Request-Received"); reqRecHeader != "" {
+		if reqRec, err := strconv.ParseInt(reqRecHeader, 10, 64); err == nil {
+			rt.requestReceived = time.Unix(0, reqRec)
+		}
+	}
 
 	reqid := r.Request.Header.Get("X-Gohrec-Request-Id")
 	if reqid == "" {
-		reqid = makeRequestID(req, rt)
+		reqid = makeRequestID(req, rt.requestReceived)
 		ghr.log("Cannot find X-Gohrec-Request-Id in response request, generating a new one: %s", reqid)
 	}
 	r.Header.Add("X-Gohrec-Response-Id", reqid)
@@ -364,9 +366,9 @@ func (ghr goHRec) proxyModifyResponse(r *http.Response) error {
 	record := responseRecord{
 		baseInfo{
 			ID:                reqid,
-			Date:              rt.received,
-			DateUTC:           rt.received.UTC(),
-			DateUnixNano:      rt.received.UnixNano(),
+			Date:              rt.responseReceived,
+			DateUTC:           rt.responseReceived.UTC(),
+			DateUnixNano:      rt.responseReceived.UnixNano(),
 			Protocol:          r.Proto,
 			Headers:           dumpValues(r.Header),
 			ContentLength:     r.ContentLength,
@@ -390,13 +392,14 @@ func (ghr goHRec) proxyModifyResponse(r *http.Response) error {
 	}
 	r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
 
+	rt.responseSent = time.Now()
 	defer ghr.saveResponse(req, record, rt, ioutil.NopCloser(bytes.NewBuffer(body)))
 
 	return nil
 }
 
 func (ghr goHRec) proxyHandler(w http.ResponseWriter, r *http.Request) {
-	rt := recordingTime{received: time.Now()}
+	rt := recordingTime{requestReceived: time.Now()}
 	req := makeRequestName(r)
 
 	proxy := httputil.NewSingleHostReverseProxy(ghr.targetURL)
@@ -406,9 +409,9 @@ func (ghr goHRec) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reqid := makeRequestID(req, rt)
+	reqid := makeRequestID(req, rt.requestReceived)
 	r.Header.Add("X-Gohrec-Request-Id", reqid)
-	r.Header.Add("X-Gohrec-Request-Received", strconv.FormatInt(rt.received.UnixNano(), 10))
+	r.Header.Add("X-Gohrec-Request-Received", strconv.FormatInt(rt.requestReceived.UnixNano(), 10))
 
 	record := ghr.prepareRequestRecord(r, rt)
 	record.ID = reqid
@@ -424,6 +427,7 @@ func (ghr goHRec) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
 
 	proxy.ModifyResponse = ghr.proxyModifyResponse
+	rt.requestForwarded = time.Now()
 	proxy.ServeHTTP(w, r)
 
 	var bodyReader io.Reader
@@ -437,7 +441,6 @@ func (ghr goHRec) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	record.Body = fmt.Sprintf("%s", bodyContent)
 
-	rt.responded = time.Now()
 	defer ghr.saveRequest(req, record, rt)
 }
 
