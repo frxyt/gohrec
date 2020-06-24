@@ -162,6 +162,19 @@ func (ghr goHRec) log(format string, a ...interface{}) {
 	}
 }
 
+func (ghr goHRec) readBody(body io.ReadCloser) string {
+	var bodyReader io.Reader
+	bodyReader = body
+	if ghr.maxBodySize != -1 {
+		bodyReader = io.LimitReader(body, ghr.maxBodySize)
+	}
+	bodyContent, err := ioutil.ReadAll(bodyReader)
+	if err != nil {
+		ghr.log("Error while dumping body: %s", err)
+	}
+	return fmt.Sprintf("%s", bodyContent)
+}
+
 func (ghr goHRec) redactRecord(record *baseInfo) {
 	if record == nil {
 		return
@@ -322,31 +335,41 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 	defer ghr.saveRequest(req, record, rt)
 }
 
-func (ghr goHRec) saveResponse(req string, record responseRecord, rt recordingTime, body io.ReadCloser) {
-	var bodyReader io.Reader
-	bodyReader = body
-	if ghr.maxBodySize != -1 {
-		bodyReader = io.LimitReader(body, ghr.maxBodySize)
-	}
-	bodyContent, err := ioutil.ReadAll(bodyReader)
-	if err != nil {
-		ghr.log("Error while dumping body: %s", err)
-	}
-	record.Body = fmt.Sprintf("%s", bodyContent)
-
-	ghr.redactRecord(&record.baseInfo)
-
-	if record.ID == "" {
-		record.ID = makeRequestID(req, rt.requestReceived)
+func (ghr goHRec) saveResponse(req string, resRec responseRecord, rt recordingTime, body io.ReadCloser, response *http.Response) {
+	if response == nil {
+		ghr.log("Error while saving response: %s (%s)", resRec.ID, req)
 	}
 
-	json, err := json.MarshalIndent(gohrecRecord{Response: &record}, "", " ")
+	reqRec := ghr.prepareRequestRecord(response.Request, rt)
+	resRec.Body = ghr.readBody(response.Request.Body)
+	ghr.redactRecord(&reqRec.baseInfo)
+
+	resRec.DateUTC = rt.responseReceived.UTC()
+	resRec.DateUnixNano = rt.responseReceived.UnixNano()
+	resRec.Protocol = response.Proto
+	resRec.Headers = dumpValues(response.Header)
+	resRec.ContentLength = response.ContentLength
+	resRec.Trailers = dumpValues(response.Trailer)
+	resRec.TransferEncodings = response.TransferEncoding
+	resRec.Body = ghr.readBody(body)
+	ghr.redactRecord(&resRec.baseInfo)
+
+	if resRec.ID == "" {
+		resRec.ID = makeRequestID(req, rt.requestReceived)
+	}
+
+	record := gohrecRecord{
+		Request:  &reqRec,
+		Response: &resRec,
+	}
+
+	json, err := json.MarshalIndent(record, "", " ")
 	if err != nil {
 		ghr.log("Error while serializing record: %s", err)
 		return
 	}
 
-	filename, err := ghr.saveJSON(json, record.ID, rt.requestReceived, "response", req)
+	filename, err := ghr.saveJSON(json, resRec.ID, rt.requestReceived, "response", req)
 	ghr.log("Recorded: %s (%s)", filename, req)
 }
 
@@ -370,15 +393,8 @@ func (ghr goHRec) proxyModifyResponse(r *http.Response) error {
 
 	record := responseRecord{
 		baseInfo{
-			ID:                reqid,
-			Date:              rt.responseReceived,
-			DateUTC:           rt.responseReceived.UTC(),
-			DateUnixNano:      rt.responseReceived.UnixNano(),
-			Protocol:          r.Proto,
-			Headers:           dumpValues(r.Header),
-			ContentLength:     r.ContentLength,
-			Trailers:          dumpValues(r.Trailer),
-			TransferEncodings: r.TransferEncoding,
+			ID:   reqid,
+			Date: rt.responseReceived,
 		},
 		responseInfo{
 			Compressed: !r.Uncompressed,
@@ -398,7 +414,7 @@ func (ghr goHRec) proxyModifyResponse(r *http.Response) error {
 	r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
 
 	rt.responseSent = time.Now()
-	defer ghr.saveResponse(req, record, rt, ioutil.NopCloser(bytes.NewBuffer(body)))
+	defer ghr.saveResponse(req, record, rt, ioutil.NopCloser(bytes.NewBuffer(body)), r)
 
 	return nil
 }
@@ -418,35 +434,9 @@ func (ghr goHRec) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	r.Header.Add("X-Gohrec-Request-Id", reqid)
 	r.Header.Add("X-Gohrec-Request-Received", strconv.FormatInt(rt.requestReceived.UnixNano(), 10))
 
-	record := ghr.prepareRequestRecord(r, rt)
-	record.ID = reqid
-
-	var body []byte
-	var err error
-	if r.Body != nil {
-		body, err = ioutil.ReadAll(r.Body)
-		if err != nil {
-			ghr.log("Error while reading body: %s", err)
-		}
-	}
-	r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
-
-	proxy.ModifyResponse = ghr.proxyModifyResponse
 	rt.requestForwarded = time.Now()
+	proxy.ModifyResponse = ghr.proxyModifyResponse
 	proxy.ServeHTTP(w, r)
-
-	var bodyReader io.Reader
-	bodyReader = ioutil.NopCloser(bytes.NewBuffer(body))
-	if ghr.maxBodySize != -1 {
-		bodyReader = io.LimitReader(r.Body, ghr.maxBodySize)
-	}
-	bodyContent, err := ioutil.ReadAll(bodyReader)
-	if err != nil {
-		ghr.log("Error while dumping body: %s", err)
-	}
-	record.Body = fmt.Sprintf("%s", bodyContent)
-
-	defer ghr.saveRequest(req, record, rt)
 }
 
 func record() {
