@@ -18,6 +18,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/httputil"
+	"net/http/pprof"
 	"net/url"
 	"os"
 	"regexp"
@@ -144,7 +145,7 @@ func dumpValues(in map[string][]string) []string {
 	out := []string{}
 	for name, values := range in {
 		for _, value := range values {
-			out = append(out, fmt.Sprintf("%v: %v", name, value))
+			out = append(out, fmt.Sprintf("%s: %s", name, value))
 		}
 	}
 	sort.Strings(out)
@@ -455,6 +456,7 @@ func record() {
 	echo := record.Bool("echo", false, "Echo logged request on calls.")
 	index := record.Bool("index", false, "Build an index of hashes and their clear text representation.")
 	proxy := record.Bool("proxy", false, "Enable proxy mode.")
+	enablePprof := record.Bool("pprof", false, "Enable pprof endpoints /debug/pprof/*.")
 	verbose := record.Bool("verbose", false, "Log processed request status.")
 
 	var redactBody arrayRedactFlag
@@ -517,19 +519,32 @@ func record() {
 	log.Printf("  echo: %t", gohrec.echo)
 	log.Printf("  index: %t", gohrec.index)
 	log.Printf("  proxy: %t", gohrec.proxy)
+	log.Printf("  pprof: %t", *enablePprof)
 	log.Printf("  verbose: %t", gohrec.verbose)
 
 	rand.Seed(time.Now().UnixNano())
+
+	gohrecMux := http.NewServeMux()
 
 	if gohrec.proxy {
 		if gohrec.targetURL == nil {
 			panic("--target-url is required when proxy mode is enabled!")
 		}
-		http.HandleFunc("/", gohrec.proxyHandler)
+		gohrecMux.HandleFunc("/", gohrec.proxyHandler)
 	} else {
-		http.HandleFunc("/", gohrec.handler)
+		gohrecMux.HandleFunc("/", gohrec.handler)
 	}
-	log.Fatal(http.ListenAndServe(gohrec.listen, nil))
+
+	if *enablePprof {
+		// Register pprof handlers
+		gohrecMux.HandleFunc("/debug/pprof/", pprof.Index)
+		gohrecMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		gohrecMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		gohrecMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		gohrecMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	}
+
+	log.Fatal(http.ListenAndServe(gohrec.listen, gohrecMux))
 }
 
 func redo() {
