@@ -20,6 +20,7 @@ services:
     command:
       - record
       - --index
+      - --pprof
       - --proxy
       - --redact-body=(<secret>).*(<secret />)/$$1**REDACTED**$$2
       - --redact-body=p@s$$w0rD
@@ -37,6 +38,8 @@ services:
       - public
     volumes:
       - ./log:/gohrec/log:rw
+      #- /etc/timezone:/etc/timezone:ro
+      #- /etc/localtime:/etc/localtime:ro
 
   traefik:
     image: traefik:2.2
