@@ -142,10 +142,16 @@ type responseRecord struct {
 }
 
 func dumpValues(in map[string][]string) []string {
-	out := []string{}
+	count := 0
+	for _, values := range in {
+		count += len(values)
+	}
+	out := make([]string, count)
+	index := 0
 	for name, values := range in {
 		for _, value := range values {
-			out = append(out, fmt.Sprintf("%s: %s", name, value))
+			out[index] = fmt.Sprintf("%s: %s", name, value)
+			index++
 		}
 	}
 	sort.Strings(out)
@@ -204,8 +210,14 @@ func (ghr goHRec) saveJSON(json []byte, id string, received time.Time, suffix st
 	return filename, nil
 }
 
-func (ghr goHRec) saveRequest(req string, record requestRecord, rt recordingTime) {
+func (ghr goHRec) saveRequest(req string, record requestRecord, rt recordingTime, body io.Reader) {
 	ghr.redactRecord(&record.baseInfo)
+
+	bodyContent, err := ioutil.ReadAll(body)
+	if err != nil {
+		ghr.log("Error while dumping body: %s", err)
+	}
+	record.Body = fmt.Sprintf("%s", bodyContent)
 
 	if record.ID == "" {
 		record.ID = makeRequestID(req, rt.requestReceived)
@@ -296,15 +308,11 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 	record := ghr.prepareRequestRecord(r, rt)
 
 	var bodyReader io.Reader
-	bodyReader = r.Body
-	if ghr.maxBodySize != -1 {
+	if ghr.maxBodySize == -1 {
+		bodyReader = r.Body
+	} else {
 		bodyReader = io.LimitReader(r.Body, ghr.maxBodySize)
 	}
-	body, err := ioutil.ReadAll(bodyReader)
-	if err != nil {
-		ghr.log("Error while dumping body: %s", err)
-	}
-	record.Body = fmt.Sprintf("%s", body)
 
 	w.WriteHeader(http.StatusCreated)
 	if ghr.echo {
@@ -315,13 +323,14 @@ func (ghr goHRec) handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "Recorded.")
 
 	rt.responseSent = time.Now()
-	defer ghr.saveRequest(req, record, rt)
+	defer ghr.saveRequest(req, record, rt, bodyReader)
 }
 
 func (ghr goHRec) saveResponse(req string, record responseRecord, rt recordingTime, body io.ReadCloser) {
 	var bodyReader io.Reader
-	bodyReader = body
-	if ghr.maxBodySize != -1 {
+	if ghr.maxBodySize == -1 {
+		bodyReader = body
+	} else {
 		bodyReader = io.LimitReader(body, ghr.maxBodySize)
 	}
 	bodyContent, err := ioutil.ReadAll(bodyReader)
@@ -432,17 +441,13 @@ func (ghr goHRec) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(w, r)
 
 	var bodyReader io.Reader
-	bodyReader = ioutil.NopCloser(bytes.NewBuffer(body))
-	if ghr.maxBodySize != -1 {
+	if ghr.maxBodySize == -1 {
+		bodyReader = ioutil.NopCloser(bytes.NewBuffer(body))
+	} else {
 		bodyReader = io.LimitReader(r.Body, ghr.maxBodySize)
 	}
-	bodyContent, err := ioutil.ReadAll(bodyReader)
-	if err != nil {
-		ghr.log("Error while dumping body: %s", err)
-	}
-	record.Body = fmt.Sprintf("%s", bodyContent)
 
-	defer ghr.saveRequest(req, record, rt)
+	defer ghr.saveRequest(req, record, rt, bodyReader)
 }
 
 func record() {
