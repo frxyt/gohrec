@@ -19,6 +19,7 @@ services:
     image: frxyt/gohrec:latest
     command:
       - record
+      - --freemem
       - --index
       - --pprof
       - --proxy

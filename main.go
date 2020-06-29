@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -450,6 +451,12 @@ func (ghr goHRec) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	defer ghr.saveRequest(req, record, rt, bodyReader)
 }
 
+func freeMemHandler(w http.ResponseWriter, r *http.Request) {
+	debug.FreeOSMemory()
+	w.WriteHeader(http.StatusAccepted)
+	fmt.Fprintln(w, "Requested free os memory.")
+}
+
 func record() {
 	record := flag.NewFlagSet("record", flag.PanicOnError)
 	listen := record.String("listen", ":8080", "Interface and port to listen.")
@@ -461,6 +468,7 @@ func record() {
 	echo := record.Bool("echo", false, "Echo logged request on calls.")
 	index := record.Bool("index", false, "Build an index of hashes and their clear text representation.")
 	proxy := record.Bool("proxy", false, "Enable proxy mode.")
+	enableFreeMem := record.Bool("freemem", false, "Enable free memory endpoint /debug/freemem.")
 	enablePprof := record.Bool("pprof", false, "Enable pprof endpoints /debug/pprof/*.")
 	verbose := record.Bool("verbose", false, "Log processed request status.")
 
@@ -540,6 +548,9 @@ func record() {
 		gohrecMux.HandleFunc("/", gohrec.handler)
 	}
 
+	if *enableFreeMem {
+		gohrecMux.HandleFunc("/debug/freemem", freeMemHandler)
+	}
 	if *enablePprof {
 		// Register pprof handlers
 		gohrecMux.HandleFunc("/debug/pprof/", pprof.Index)
