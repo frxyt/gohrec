@@ -239,7 +239,11 @@ func (ghr goHRec) saveRequest(req string, record requestRecord, rt recordingTime
 }
 
 func makeRequestName(r *http.Request) string {
-	return fmt.Sprintf("[%s] %s http://%s%s", r.RemoteAddr, r.Method, r.Host, r.RequestURI)
+	ip := r.Header.Get("X-Real-Ip")
+	if ip == "" {
+		ip = r.RemoteAddr
+	}
+	return fmt.Sprintf("[%s] %s http://%s%s", ip, r.Method, r.Host, r.RequestURI)
 }
 
 func makeRequestID(req string, received time.Time) string {
