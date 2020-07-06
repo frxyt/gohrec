@@ -1,0 +1,7 @@
+builder:
+  image: golang:latest
+  command: build/go-exe-build gohrec
+  restart: "no"
+  volumes:
+    - ./../:/app:rw
+  working_dir: /app
