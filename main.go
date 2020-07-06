@@ -22,10 +22,10 @@ import (
 	"net/url"
 	"os"
 	"regexp"
-	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -102,6 +102,8 @@ type goHRec struct {
 	targetURL                   *url.URL
 	echo, index, proxy, verbose bool
 	indexLogger                 *log.Logger
+	proxyDirect, proxyLog       *httputil.ReverseProxy
+	bufferPool                  *bufferPool
 }
 
 type recordingTime struct {
@@ -140,6 +142,68 @@ type requestRecord struct {
 type responseRecord struct {
 	baseInfo
 	responseInfo
+}
+
+type bufferPool struct {
+	pool sync.Pool
+}
+
+func newBufferPool() *bufferPool {
+	return &bufferPool{
+		pool: sync.Pool{New: func() interface{} {
+			return []byte{}
+		}},
+	}
+}
+
+func (bp *bufferPool) Get() []byte {
+	b := bp.pool.Get().([]byte)
+	log.Printf("BufferPool: Get(%d)", len(b))
+	return b
+}
+
+func (bp *bufferPool) Put(b []byte) {
+	log.Printf("BufferPool: Put(%d)", len(b))
+	bp.pool.Put(b)
+}
+
+type bodyStream struct {
+	source       io.ReadCloser
+	copy         []byte
+	limit        int
+	reader       io.Reader
+	closed, full bool
+}
+
+func (bs bodyStream) Read(p []byte) (n int, err error) {
+	return bs.reader.Read(p)
+}
+
+func (bs bodyStream) Close() error {
+	bs.closed = true
+	return bs.source.Close()
+}
+
+func (bs bodyStream) Write(p []byte) (n int, err error) {
+	lenP := len(p)
+	if bs.full {
+		return lenP, nil
+	}
+	lenC := len(bs.copy)
+	if len(bs.copy)+len(p) > bs.limit {
+		bs.full = true
+		return len(p), nil
+	}
+	bs.copy = append(bs.copy, p)
+}
+
+func newBodyReader(body io.ReadCloser, limit int) io.ReadCloser {
+	bs := bodyStream{
+		source: body,
+		limit:  limit,
+	}
+	bs.reader = io.TeeReader(body, bs)
+	return bs
 }
 
 func dumpValues(in map[string][]string) []string {
@@ -239,7 +303,11 @@ func (ghr goHRec) saveRequest(req string, record requestRecord, rt recordingTime
 }
 
 func makeRequestName(r *http.Request) string {
-	return fmt.Sprintf("[%s] %s http://%s%s", r.RemoteAddr, r.Method, r.Host, r.RequestURI)
+	ip := r.Header.Get("X-Real-Ip")
+	if ip == "" {
+		ip = r.RemoteAddr
+	}
+	return fmt.Sprintf("[%s] %s http://%s%s", ip, r.Method, r.Host, r.RequestURI)
 }
 
 func makeRequestID(req string, received time.Time) string {
@@ -414,6 +482,7 @@ func (ghr goHRec) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	req := makeRequestName(r)
 
 	proxy := httputil.NewSingleHostReverseProxy(ghr.targetURL)
+	proxy.BufferPool = ghr.bufferPool
 
 	if ghr.isNotWhitelisted(r, req) || ghr.isBlacklisted(r, req) {
 		proxy.ServeHTTP(w, r)
@@ -437,8 +506,8 @@ func (ghr goHRec) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
 
-	proxy.ModifyResponse = ghr.proxyModifyResponse
 	rt.requestForwarded = time.Now()
+	proxy.ModifyResponse = ghr.proxyModifyResponse
 	proxy.ServeHTTP(w, r)
 
 	var bodyReader io.Reader
@@ -449,12 +518,6 @@ func (ghr goHRec) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defer ghr.saveRequest(req, record, rt, bodyReader)
-}
-
-func freeMemHandler(w http.ResponseWriter, r *http.Request) {
-	debug.FreeOSMemory()
-	w.WriteHeader(http.StatusAccepted)
-	fmt.Fprintln(w, "Requested free os memory.")
 }
 
 func record() {
@@ -468,7 +531,6 @@ func record() {
 	echo := record.Bool("echo", false, "Echo logged request on calls.")
 	index := record.Bool("index", false, "Build an index of hashes and their clear text representation.")
 	proxy := record.Bool("proxy", false, "Enable proxy mode.")
-	enableFreeMem := record.Bool("freemem", false, "Enable free memory endpoint /debug/freemem.")
 	enablePprof := record.Bool("pprof", false, "Enable pprof endpoints /debug/pprof/*.")
 	verbose := record.Bool("verbose", false, "Log processed request status.")
 
@@ -510,6 +572,7 @@ func record() {
 		index:         *index,
 		proxy:         *proxy,
 		verbose:       *verbose,
+		bufferPool:    newBufferPool(),
 	}
 
 	if gohrec.index {
@@ -544,15 +607,14 @@ func record() {
 			panic("--target-url is required when proxy mode is enabled!")
 		}
 		gohrecMux.HandleFunc("/", gohrec.proxyHandler)
+		//gohrec.proxyDirect = httputil.NewSingleHostReverseProxy(gohrec.targetURL)
+		//gohrec.proxyLog = httputil.NewSingleHostReverseProxy(gohrec.targetURL)
+		//gohrec.proxyLog.ModifyResponse = gohrec.proxyModifyResponse
 	} else {
 		gohrecMux.HandleFunc("/", gohrec.handler)
 	}
 
-	if *enableFreeMem {
-		gohrecMux.HandleFunc("/debug/freemem", freeMemHandler)
-	}
 	if *enablePprof {
-		// Register pprof handlers
 		gohrecMux.HandleFunc("/debug/pprof/", pprof.Index)
 		gohrecMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
 		gohrecMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
