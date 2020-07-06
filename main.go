@@ -26,6 +26,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -102,6 +103,7 @@ type goHRec struct {
 	targetURL                   *url.URL
 	echo, index, proxy, verbose bool
 	indexLogger                 *log.Logger
+	bytesPool                   *bytesPool
 }
 
 type recordingTime struct {
@@ -140,6 +142,26 @@ type requestRecord struct {
 type responseRecord struct {
 	baseInfo
 	responseInfo
+}
+
+type bytesPool struct {
+	pool sync.Pool
+}
+
+func newBytesPool() *bytesPool {
+	return &bytesPool{
+		pool: sync.Pool{New: func() interface{} {
+			return []byte{}
+		}},
+	}
+}
+
+func (bp *bytesPool) Get() []byte {
+	return bp.pool.Get().([]byte)
+}
+
+func (bp *bytesPool) Put(b []byte) {
+	bp.pool.Put(b)
 }
 
 func dumpValues(in map[string][]string) []string {
@@ -418,6 +440,7 @@ func (ghr goHRec) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	req := makeRequestName(r)
 
 	proxy := httputil.NewSingleHostReverseProxy(ghr.targetURL)
+	proxy.BufferPool = ghr.bytesPool
 
 	if ghr.isNotWhitelisted(r, req) || ghr.isBlacklisted(r, req) {
 		proxy.ServeHTTP(w, r)
@@ -547,6 +570,7 @@ func record() {
 		if gohrec.targetURL == nil {
 			panic("--target-url is required when proxy mode is enabled!")
 		}
+		gohrec.bytesPool = newBytesPool()
 		gohrecMux.HandleFunc("/", gohrec.proxyHandler)
 	} else {
 		gohrecMux.HandleFunc("/", gohrec.handler)
