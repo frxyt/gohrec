@@ -102,6 +102,7 @@ type goHRec struct {
 	targetURL                   *url.URL
 	echo, index, proxy, verbose bool
 	indexLogger                 *log.Logger
+	proxyDirect, proxyLog       *httputil.ReverseProxy
 	bytesPool                   *bytesPool
 }
 
@@ -438,11 +439,8 @@ func (ghr goHRec) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	rt := recordingTime{requestReceived: time.Now()}
 	req := makeRequestName(r)
 
-	proxy := httputil.NewSingleHostReverseProxy(ghr.targetURL)
-	proxy.BufferPool = ghr.bytesPool
-
 	if ghr.isNotWhitelisted(r, req) || ghr.isBlacklisted(r, req) {
-		proxy.ServeHTTP(w, r)
+		ghr.proxyDirect.ServeHTTP(w, r)
 		return
 	}
 
@@ -463,9 +461,8 @@ func (ghr goHRec) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
 
-	proxy.ModifyResponse = ghr.proxyModifyResponse
 	rt.requestForwarded = time.Now()
-	proxy.ServeHTTP(w, r)
+	ghr.proxyLog.ServeHTTP(w, r)
 
 	var bodyReader io.Reader
 	if ghr.maxBodySize == -1 {
@@ -563,6 +560,11 @@ func record() {
 			panic("--target-url is required when proxy mode is enabled!")
 		}
 		gohrec.bytesPool = newBytesPool()
+		gohrec.proxyDirect = httputil.NewSingleHostReverseProxy(gohrec.targetURL)
+		gohrec.proxyDirect.BufferPool = gohrec.bytesPool
+		gohrec.proxyLog = httputil.NewSingleHostReverseProxy(gohrec.targetURL)
+		gohrec.proxyLog.BufferPool = gohrec.bytesPool
+		gohrec.proxyLog.ModifyResponse = gohrec.proxyModifyResponse
 		gohrecMux.HandleFunc("/", gohrec.proxyHandler)
 	} else {
 		gohrecMux.HandleFunc("/", gohrec.handler)
